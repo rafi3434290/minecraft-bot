@@ -32,12 +32,13 @@ SERVER_ID = os.getenv("SERVER_ID", "").strip()
 MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
-# Fallback models in case one is unavailable
+# Active Groq models only
 GROQ_MODELS = [
     "llama-3.3-70b-versatile",
-    "llama-3.1-70b-versatile",
+    "llama-3.1-8b-instant",
     "llama3-70b-8192",
-    "mixtral-8x7b-32768"
+    "llama3-8b-8192",
+    "gemma2-9b-it"
 ]
 
 # Memory File Path
@@ -396,7 +397,6 @@ async def on_message(message):
             response = None
             last_err = None
 
-            # Try models dynamically until one succeeds
             for model_name in GROQ_MODELS:
                 try:
                     def sync_groq(m_name):
@@ -434,7 +434,7 @@ async def on_message(message):
                         path = args.get("file_path", "")
                         view = ConfirmationView(MY_DISCORD_ID, "delete", path)
                         await message.channel.send(
-                            f"⚠️️ **অনুমোদনের অনুরোধ:** এআই `{path}` ফাইলটি মুছে ফেলতে চাচ্ছে। আপনি কি অনুমোদন দিচ্ছেন?",
+                            f"⚠️ **অনুমোদনের অনুরোধ:** এআই `{path}` ফাইলটি মুছে ফেলতে চাচ্ছে। আপনি কি অনুমোদন দিচ্ছেন?",
                             view=view
                         )
 
@@ -498,4 +498,3 @@ async def on_message(message):
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
-        
