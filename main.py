@@ -8,7 +8,7 @@ from discord.ui import Button, View
 from flask import Flask
 from groq import Groq
 
-# --- Dummy Web Server for Render 24/7 Keep-Alive ---
+# --- Keep-Alive Web Server for Render ---
 app = Flask('')
 
 @app.route('/')
@@ -22,7 +22,6 @@ def run():
 def keep_alive():
     t = threading.Thread(target=run)
     t.start()
-# ---------------------------------------------------
 
 # Environment Variables
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "").strip()
@@ -32,10 +31,12 @@ SERVER_ID = os.getenv("SERVER_ID", "").strip()
 MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
-# Memory File Path
+# Official Groq Production Models with Native Tool Calling Support
+PRIMARY_MODEL = "llama-3.3-70b-versatile"
+FALLBACK_MODEL = "llama-3.1-8b-instant"
+
 MEMORY_FILE = "memory.json"
 
-# --- Persistent Long-Term Memory Helpers ---
 def load_memory() -> dict:
     if os.path.exists(MEMORY_FILE):
         try:
@@ -51,8 +52,8 @@ def save_memory_fact(fact_or_rule: str) -> str:
         data["rules"].append(fact_or_rule)
         with open(MEMORY_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        return f"Memory updated: Saved '{fact_or_rule}' into persistent memory."
-    return "Rule is already saved in memory."
+        return f"Memory updated: Saved '{fact_or_rule}'"
+    return "Rule is already saved."
 
 def get_saved_memory() -> str:
     data = load_memory()
@@ -61,31 +62,6 @@ def get_saved_memory() -> str:
         return "No specific long-term rules saved yet."
     return "Saved Server Rules & Notes:\n" + "\n".join([f"- {r}" for r in rules])
 
-# --- Dynamic Groq Active Model Finder ---
-def get_best_active_model(client: Groq) -> str:
-    """Fetches real-time active models directly from Groq API to avoid decommissioned errors."""
-    preferred_models = [
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-        "llama-3.2-11b-vision-instruct",
-        "llama-3.2-3b-preview"
-    ]
-    try:
-        live_models = client.models.list()
-        active_model_ids = [m.id for m in live_models.data if getattr(m, 'active', True)]
-        
-        for pref in preferred_models:
-            if pref in active_model_ids:
-                return pref
-        
-        if active_model_ids:
-            return active_model_ids[0]
-    except Exception:
-        pass
-    
-    return "llama-3.1-8b-instant"
-
-# --- Godlike Panel API Headers ---
 def get_api_headers(content_type="application/json"):
     return {
         "Authorization": f"Bearer {GODLIKE_API_KEY}",
@@ -93,11 +69,10 @@ def get_api_headers(content_type="application/json"):
         "Accept": "application/json"
     }
 
-# --- Safe / Non-Destructive Server Tools ---
 def get_server_resources() -> str:
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/resources"
     try:
-        res = requests.get(url, headers=get_api_headers())
+        res = requests.get(url, headers=get_api_headers(), timeout=10)
         if res.status_code == 200:
             data = res.json()['attributes']
             stats = data['resources']
@@ -106,27 +81,27 @@ def get_server_resources() -> str:
             cpu_pct = round(stats['cpu_absolute'], 2)
             disk_mb = round(stats['disk_bytes'] / (1024 * 1024), 2)
             return f"📊 **Server Status:** `{state.upper()}`\n💻 **CPU:** `{cpu_pct}%` | 🧠 **RAM:** `{ram_mb} MB` | 💾 **Disk:** `{disk_mb} MB`"
-        return f"Failed to fetch resources. Status Code: {res.status_code}"
+        return f"Failed to fetch resources. Status: {res.status_code}"
     except Exception as e:
         return f"API Error: {str(e)}"
 
 def get_online_players() -> str:
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/command"
     try:
-        res = requests.post(url, headers=get_api_headers(), json={"command": "list"})
+        res = requests.post(url, headers=get_api_headers(), json={"command": "list"}, timeout=10)
         if res.status_code == 204:
-            return "Sent '/list' command to server console. Check logs for response."
-        return f"Failed to send list command. Status Code: {res.status_code}"
+            return "Sent '/list' command to server console."
+        return f"Failed to send command. Status: {res.status_code}"
     except Exception as e:
         return f"API Error: {str(e)}"
 
 def send_console_command(command: str) -> str:
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/command"
     try:
-        res = requests.post(url, headers=get_api_headers(), json={"command": command})
+        res = requests.post(url, headers=get_api_headers(), json={"command": command}, timeout=10)
         if res.status_code == 204:
             return f"Command `{command}` executed successfully on console."
-        return f"Failed to execute command. Status: {res.status_code}, Response: {res.text}"
+        return f"Failed to execute. Status: {res.status_code}"
     except Exception as e:
         return f"API Error: {str(e)}"
 
@@ -134,39 +109,38 @@ def read_server_file(file_path: str) -> str:
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/files/contents?file={file_path}"
     headers = {"Authorization": f"Bearer {GODLIKE_API_KEY}", "Accept": "text/plain"}
     try:
-        res = requests.get(url, headers=headers)
+        res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             return res.text
-        return f"Failed to read file '{file_path}'. Status Code: {res.status_code}"
+        return f"Failed to read file '{file_path}'. Status: {res.status_code}"
     except Exception as e:
         return f"Error reading file: {str(e)}"
 
 def write_server_file(file_path: str, content: str) -> str:
     if not content or len(content.strip()) == 0:
-        return "Error: Cannot write empty content to file."
-        
+        return "Error: Cannot write empty content."
     existing = read_server_file(file_path)
     if existing and not existing.startswith("Failed to read"):
         backup_url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/files/write?file={file_path}.bak"
-        requests.post(backup_url, headers=get_api_headers("text/plain"), data=existing)
+        requests.post(backup_url, headers=get_api_headers("text/plain"), data=existing, timeout=10)
 
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/files/write?file={file_path}"
     try:
-        res = requests.post(url, headers=get_api_headers("text/plain"), data=content)
+        res = requests.post(url, headers=get_api_headers("text/plain"), data=content, timeout=10)
         if res.status_code == 204:
-            return f"File '{file_path}' written successfully. (Auto-backup created at '{file_path}.bak')"
-        return f"Failed to write file. Status: {res.status_code}, Response: {res.text}"
+            return f"File '{file_path}' written successfully with auto-backup."
+        return f"Failed to write file. Status: {res.status_code}"
     except Exception as e:
         return f"Error writing file: {str(e)}"
 
 def list_server_files(directory: str = "") -> str:
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/files/list?directory={directory}"
     try:
-        res = requests.get(url, headers=get_api_headers())
+        res = requests.get(url, headers=get_api_headers(), timeout=10)
         if res.status_code == 200:
             items = [item['attributes']['name'] for item in res.json().get('data', [])]
             return f"Files in '{directory or 'root'}': " + ", ".join(items)
-        return f"Failed to list directory. Status Code: {res.status_code}"
+        return f"Failed to list files. Status: {res.status_code}"
     except Exception as e:
         return f"Error listing directory: {str(e)}"
 
@@ -175,15 +149,15 @@ def read_latest_logs() -> str:
     if log_content.startswith("Failed to read"):
         return log_content
     lines = log_content.strip().split("\n")
-    return "Last 50 lines of logs:\n" + "\n".join(lines[-50:])
+    return "Last 30 lines of logs:\n" + "\n".join(lines[-30:])
 
 def execute_power_signal(signal: str) -> str:
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/power"
     try:
-        res = requests.post(url, headers=get_api_headers(), json={"signal": signal})
+        res = requests.post(url, headers=get_api_headers(), json={"signal": signal}, timeout=10)
         if res.status_code == 204:
-            return f"Power signal '{signal.upper()}' sent successfully to server."
-        return f"Failed power action. Status Code: {res.status_code}"
+            return f"Power signal '{signal.upper()}' sent successfully."
+        return f"Failed power signal. Status: {res.status_code}"
     except Exception as e:
         return f"Error executing power action: {str(e)}"
 
@@ -191,10 +165,10 @@ def execute_file_deletion(file_path: str) -> str:
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/files/delete"
     payload = {"root": "/", "files": [file_path]}
     try:
-        res = requests.post(url, headers=get_api_headers(), json=payload)
+        res = requests.post(url, headers=get_api_headers(), json=payload, timeout=10)
         if res.status_code == 204:
             return f"File '{file_path}' deleted successfully."
-        return f"Failed file deletion. Status Code: {res.status_code}"
+        return f"Failed deletion. Status: {res.status_code}"
     except Exception as e:
         return f"Error deleting file: {str(e)}"
 
@@ -246,7 +220,7 @@ groq_tools = [
         "type": "function",
         "function": {
             "name": "write_server_file",
-            "description": "Safely updates/writes content to a file after creating a .bak backup.",
+            "description": "Safely updates/writes content to a file.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -265,7 +239,7 @@ groq_tools = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "directory": {"type": "string", "description": "Directory path, e.g. 'plugins'"}
+                    "directory": {"type": "string", "description": "Directory path"}
                 }
             }
         }
@@ -274,14 +248,14 @@ groq_tools = [
         "type": "function",
         "function": {
             "name": "read_latest_logs",
-            "description": "Fetches the last 50 lines of logs/latest.log."
+            "description": "Fetches the last 30 lines of logs/latest.log."
         }
     },
     {
         "type": "function",
         "function": {
             "name": "save_memory_fact",
-            "description": "Saves long-term instructions or rules given by the user to memory.json.",
+            "description": "Saves long-term instructions or rules given by the user.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -328,7 +302,6 @@ groq_tools = [
     }
 ]
 
-# --- Confirmation View for Owner Approval ---
 class ConfirmationView(View):
     def __init__(self, owner_id: int, action_type: str, action_data: str):
         super().__init__(timeout=60)
@@ -348,10 +321,10 @@ class ConfirmationView(View):
 
         if self.action_type == "power":
             res = execute_power_signal(self.action_data)
-            await interaction.followup.send(f"⚡ **সার্ভার অ্যাকশন রিপোর্ট:** {res}")
+            await send_split_message(interaction.channel, f"⚡ **সার্ভার অ্যাকশন রিপোর্ট:** {res}")
         elif self.action_type == "delete":
             res = execute_file_deletion(self.action_data)
-            await interaction.followup.send(f"🗑 **ফাইল ডিলিট রিপোর্ট:** {res}")
+            await send_split_message(interaction.channel, f"🗑 **ফাইল ডিলিট রিপোর্ট:** {res}")
 
     @discord.ui.button(label="❌ বাতিল করুন", style=discord.ButtonStyle.red)
     async def cancel(self, interaction: discord.Interaction, button: Button):
@@ -363,15 +336,26 @@ class ConfirmationView(View):
             item.disabled = True
         await interaction.response.edit_message(content="🛑 **কাজটি বাতিল করা হয়েছে।**", view=self)
 
-# --- Discord Bot Setup ---
 intents = discord.Intents.default()
 intents.message_content = True
 bot = discord.Client(intents=intents)
 
+async def send_split_message(channel, text: str):
+    """Safely splits and sends long text to Discord avoiding 2000 character limits."""
+    if not text:
+        return
+    text = str(text)
+    if len(text) <= 1900:
+        await channel.send(text)
+    else:
+        for i in range(0, len(text), 1900):
+            chunk = text[i:i+1900]
+            await channel.send(chunk)
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name}!")
-    print("Groq Dynamic AI Assistant is online!")
+    print("Groq Bot with Fixed Rate-Limit and Official Stable Tool Calling is Online!")
 
 @bot.event
 async def on_message(message):
@@ -382,45 +366,50 @@ async def on_message(message):
         return
 
     msg_text = message.content.strip()
+    if not msg_text:
+        return
 
     async with message.channel.typing():
         recent_history = []
-        async for msg in message.channel.history(limit=4):
-            recent_history.append(f"{msg.author.name}: {msg.content}")
+        async for msg in message.channel.history(limit=3):
+            recent_history.append(f"{msg.author.name}: {msg.content[:200]}")
         recent_history.reverse()
         chat_context = "\n".join(recent_history)
 
         saved_rules = get_saved_memory()
 
         sys_instruction = (
-            "You are an extraordinarily smart Minecraft Paper 1.21.11 server administrator powered by Groq AI.\n"
-            f"Long-Term Saved Memory:\n{saved_rules}\n\n"
-            "Operational Guidelines:\n"
-            "1. When editing or writing files, ensure complete YAML syntax without missing lines.\n"
-            "2. ONLY invoke power signals or file deletions if the user explicitly orders you to restart, stop, or delete RIGHT NOW.\n"
-            "3. Be extremely precise, helpful, and natural."
+            "You are a smart Minecraft Paper 1.21.11 server administrator powered by Groq AI.\n"
+            f"Long-Term Memory:\n{saved_rules}\n\n"
+            "Rules:\n"
+            "1. Be precise and concise.\n"
+            "2. Execute tools when needed.\n"
+            "3. Ask for confirmation before deleting or stopping server."
         )
 
         try:
             client = Groq(api_key=GROQ_API_KEY)
-            
-            # Dynamically fetch the current active model from Groq API
-            active_model = get_best_active_model(client)
 
             messages = [
                 {"role": "system", "content": sys_instruction},
                 {"role": "user", "content": f"Context:\n{chat_context}\n\nUser Message: {msg_text}"}
             ]
 
-            def sync_groq():
+            def call_groq(model_name):
                 return client.chat.completions.create(
-                    model=active_model,
+                    model=model_name,
                     messages=messages,
                     tools=groq_tools,
-                    tool_choice="auto"
+                    tool_choice="auto",
+                    max_completion_tokens=500
                 )
 
-            response = await asyncio.to_thread(sync_groq)
+            try:
+                response = await asyncio.to_thread(call_groq, PRIMARY_MODEL)
+            except Exception as model_err:
+                print(f"Primary model failed ({PRIMARY_MODEL}), switching to fallback: {model_err}")
+                response = await asyncio.to_thread(call_groq, FALLBACK_MODEL)
+
             msg_obj = response.choices[0].message
 
             if msg_obj.tool_calls:
@@ -446,61 +435,54 @@ async def on_message(message):
 
                     elif fn_name == "get_server_resources":
                         res = get_server_resources()
-                        await message.channel.send(res)
+                        await send_split_message(message.channel, res)
 
                     elif fn_name == "get_online_players":
                         res = get_online_players()
-                        await message.channel.send(f"👥 **প্লেয়ার লিস্ট স্ট্যাটাস:** {res}")
+                        await send_split_message(message.channel, f"👥 **প্লেয়ার লিস্ট স্ট্যাটাস:** {res}")
 
                     elif fn_name == "send_console_command":
                         cmd = args.get("command")
                         res = send_console_command(cmd)
-                        await message.channel.send(f"⚙️ **Console Executed:** `{cmd}`\n📄 **Result:** {res}")
+                        await send_split_message(message.channel, f"⚙️ **Console Executed:** `{cmd}`\n📄 **Result:** {res}")
 
                     elif fn_name == "write_server_file":
                         path = args.get("file_path")
                         content = args.get("content")
                         res = write_server_file(path, content)
-                        await message.channel.send(f"📝 **File Saved:** `{path}`\n📄 **Result:** {res}")
+                        await send_split_message(message.channel, f"📝 **File Saved:** `{path}`\n📄 **Result:** {res}")
 
                     elif fn_name == "read_server_file":
                         path = args.get("file_path")
                         res = read_server_file(path)
-                        if len(res) > 1900:
-                            res = res[:1900] + "\n...(truncated)"
-                        await message.channel.send(f"📖 **File Content (`{path}`):**\n```yaml\n{res}\n```")
+                        await send_split_message(message.channel, f"📖 **File Content (`{path}`):**\n```yaml\n{res}\n```")
 
                     elif fn_name == "list_server_files":
                         directory = args.get("directory", "")
                         res = list_server_files(directory)
-                        await message.channel.send(f"📁 **Directory List:**\n{res}")
+                        await send_split_message(message.channel, f"📁 **Directory List:**\n{res}")
 
                     elif fn_name == "read_latest_logs":
                         res = read_latest_logs()
-                        if len(res) > 1900:
-                            res = res[-1900:]
-                        await message.channel.send(f"📋 **Server Logs:**\n```log\n{res}\n```")
+                        await send_split_message(message.channel, f"📋 **Server Logs:**\n```log\n{res}\n```")
 
                     elif fn_name == "save_memory_fact":
                         fact = args.get("fact_or_rule")
                         res = save_memory_fact(fact)
-                        await message.channel.send(f"🧠 **মেমোরি সেভ করা হয়েছে:** {res}")
+                        await send_split_message(message.channel, f"🧠 **মেমোরি সেভ করা হয়েছে:** {res}")
 
                     elif fn_name == "get_saved_memory":
                         res = get_saved_memory()
-                        await message.channel.send(f"📜 **সংরক্ষিত মেমোরি নিয়মাবলি:**\n{res}")
+                        await send_split_message(message.channel, f"📜 **সংরক্ষিত মেমোরি নিয়মাবলি:**\n{res}")
 
             elif msg_obj.content:
-                res_text = msg_obj.content
-                if len(res_text) > 1900:
-                    for i in range(0, len(res_text), 1900):
-                        await message.channel.send(res_text[i:i+1900])
-                else:
-                    await message.channel.send(res_text)
+                await send_split_message(message.channel, msg_obj.content)
 
         except Exception as err:
-            await message.channel.send(f"❌ **Error details:** `{str(err)[:1800]}`")
+            err_str = f"❌ **Error details:** `{str(err)[:1800]}`"
+            await send_split_message(message.channel, err_str)
 
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
+            
