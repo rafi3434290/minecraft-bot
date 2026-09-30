@@ -2,6 +2,7 @@ import os
 import threading
 import requests
 import discord
+import asyncio
 from flask import Flask
 from google import genai
 from google.genai import types
@@ -102,17 +103,32 @@ async def on_message(message):
             "Be precise with Minecraft config syntax (e.g. server.properties, plugin YAML files)."
         )
 
-        try:
-            response = gemini_client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=message.content,
-                config=types.GenerateContentConfig(
-                    system_instruction=sys_instruction,
-                    tools=[send_console_command, write_server_file, read_server_file],
+        # Automatic Retry System for 503 / High Demand Errors
+        max_retries = 3
+        response = None
+        
+        for attempt in range(max_retries):
+            try:
+                response = gemini_client.models.generate_content(
+                    model="gemini-3.8-flash",
+                    contents=message.content,
+                    config=types.GenerateContentConfig(
+                        system_instruction=sys_instruction,
+                        tools=[send_console_command, write_server_file, read_server_file],
+                    )
                 )
-            )
+                break  # Successful response, exit loop
+            except Exception as err:
+                # 503 or UNAVAILABLE occurs: wait 3 seconds and retry
+                if ("503" in str(err) or "UNAVAILABLE" in str(err)) and attempt < max_retries - 1:
+                    await asyncio.sleep(3)
+                    continue
+                else:
+                    await message.channel.send(f"❌ Error processing request: {str(err)}")
+                    return
 
-            if response.function_calls:
+        try:
+            if response and response.function_calls:
                 for call in response.function_calls:
                     if call.name == "send_console_command":
                         cmd = call.args.get("command")
@@ -132,13 +148,13 @@ async def on_message(message):
                             res = res[:1900] + "\n...(truncated due to length)"
                         await message.channel.send(f"📖 **File Content (`{path}`):**\n```\n{res}\n```")
 
-            elif response.text:
+            elif response and response.text:
                 await message.channel.send(response.text)
 
         except Exception as e:
-            await message.channel.send(f"❌ Error processing request: {str(e)}")
+            await message.channel.send(f"❌ Error processing response: {str(e)}")
 
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
-                
+                                             
