@@ -24,11 +24,11 @@ def keep_alive():
 # ---------------------------------------------------
 
 # Environment Variables Configuration
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "").strip()
 GODLIKE_PANEL_URL = "https://panel.godlike.host"
-GODLIKE_API_KEY = os.getenv("GODLIKE_API_KEY", "")
-SERVER_ID = os.getenv("SERVER_ID", "")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GODLIKE_API_KEY = os.getenv("GODLIKE_API_KEY", "").strip()
+SERVER_ID = os.getenv("SERVER_ID", "").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
 
 # Initialize Gemini Client
@@ -47,7 +47,6 @@ def send_console_command(command: str) -> str:
     """Executes a command on the Minecraft server console."""
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/command"
     payload = {"command": command}
-    
     try:
         response = requests.post(url, headers=get_api_headers(), json=payload)
         if response.status_code == 204:
@@ -61,7 +60,6 @@ def read_server_file(file_path: str) -> str:
     """Reads the text content of any server file (e.g., config.yml, server.properties)."""
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/files/contents?file={file_path}"
     headers = {"Authorization": f"Bearer {GODLIKE_API_KEY}", "Accept": "text/plain"}
-    
     try:
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
@@ -139,8 +137,8 @@ server_tools = [
     get_server_resources
 ]
 
-# Standard Supported Gemini Models
-MODELS_TO_TRY = ["gemini-2.0-flash", "gemini-1.5-flash"]
+# Official Working Gemini Models (Primary: gemini-1.5-flash)
+MODELS_TO_TRY = ["gemini-1.5-flash", "gemini-2.0-flash"]
 
 def generate_gemini_content(prompt: str, sys_instruction: str):
     """Generates content trying available Gemini models."""
@@ -158,10 +156,7 @@ def generate_gemini_content(prompt: str, sys_instruction: str):
             return res
         except Exception as e:
             last_error = e
-            err_msg = str(e)
-            if "404" in err_msg or "NOT_FOUND" in err_msg:
-                continue
-            raise e
+            continue
     raise last_error
 
 # --- Discord Bot Setup ---
@@ -246,10 +241,8 @@ async def on_message(message):
             err_str = str(err)
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                 await message.channel.send("⚠️ **Gemini API-এর স্পিড লিমিট স্পর্শ করেছে।** অনুগ্রহ করে ১ মিনিট পর আবার চেষ্টা করুন।")
-            elif "404" in err_str or "NOT_FOUND" in err_str:
-                await message.channel.send("❌ **Model Not Found Error:** Gemini API Key বা মডেলটিতে কোনো সমস্যা রয়েছে।")
             else:
-                await message.channel.send(f"❌ **Error processing request:** `{err_str}`")
+                await message.channel.send(f"❌ **Error details:** `{err_str[:1800]}`")
 
 if __name__ == "__main__":
     keep_alive()
