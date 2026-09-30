@@ -32,6 +32,14 @@ SERVER_ID = os.getenv("SERVER_ID", "").strip()
 MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
+# Fallback models in case one is unavailable
+GROQ_MODELS = [
+    "llama-3.3-70b-versatile",
+    "llama-3.1-70b-versatile",
+    "llama3-70b-8192",
+    "mixtral-8x7b-32768"
+]
+
 # Memory File Path
 MEMORY_FILE = "memory.json"
 
@@ -174,7 +182,7 @@ def execute_file_deletion(file_path: str) -> str:
     except Exception as e:
         return f"Error deleting file: {str(e)}"
 
-# Groq Tools Schema Definition
+# Groq Tools Schema
 groq_tools = [
     {
         "type": "function",
@@ -327,7 +335,7 @@ class ConfirmationView(View):
             await interaction.followup.send(f"⚡ **সার্ভার অ্যাকশন রিপোর্ট:** {res}")
         elif self.action_type == "delete":
             res = execute_file_deletion(self.action_data)
-            await interaction.followup.send(f"🗑️️ **ফাইল ডিলিট রিপোর্ট:** {res}")
+            await interaction.followup.send(f"🗑 **ফাইল ডিলিট রিপোর্ট:** {res}")
 
     @discord.ui.button(label="❌ বাতিল করুন", style=discord.ButtonStyle.red)
     async def cancel(self, interaction: discord.Interaction, button: Button):
@@ -347,7 +355,7 @@ bot = discord.Client(intents=intents)
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name}!")
-    print("Groq Llama 3.3 Ultra-Fast AI Assistant is online!")
+    print("Groq Ultra-Fast AI Assistant is online!")
 
 @bot.event
 async def on_message(message):
@@ -369,7 +377,7 @@ async def on_message(message):
         saved_rules = get_saved_memory()
 
         sys_instruction = (
-            "You are an extraordinarily smart Minecraft Paper 1.21.11 server administrator powered by Groq Llama 3.3.\n"
+            "You are an extraordinarily smart Minecraft Paper 1.21.11 server administrator powered by Groq AI.\n"
             f"Long-Term Saved Memory:\n{saved_rules}\n\n"
             "Operational Guidelines:\n"
             "1. When editing or writing files, ensure complete YAML syntax without missing lines.\n"
@@ -385,15 +393,28 @@ async def on_message(message):
                 {"role": "user", "content": f"Context:\n{chat_context}\n\nUser Message: {msg_text}"}
             ]
 
-            def sync_groq():
-                return client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=messages,
-                    tools=groq_tools,
-                    tool_choice="auto"
-                )
+            response = None
+            last_err = None
 
-            response = await asyncio.to_thread(sync_groq)
+            # Try models dynamically until one succeeds
+            for model_name in GROQ_MODELS:
+                try:
+                    def sync_groq(m_name):
+                        return client.chat.completions.create(
+                            model=m_name,
+                            messages=messages,
+                            tools=groq_tools,
+                            tool_choice="auto"
+                        )
+                    response = await asyncio.to_thread(sync_groq, model_name)
+                    break
+                except Exception as e:
+                    last_err = e
+                    continue
+
+            if not response:
+                raise last_err if last_err else RuntimeError("All Groq models failed.")
+
             msg_obj = response.choices[0].message
 
             if msg_obj.tool_calls:
@@ -413,7 +434,7 @@ async def on_message(message):
                         path = args.get("file_path", "")
                         view = ConfirmationView(MY_DISCORD_ID, "delete", path)
                         await message.channel.send(
-                            f"⚠️ **অনুমোদনের অনুরোধ:** এআই `{path}` ফাইলটি মুছে ফেলতে চাচ্ছে। আপনি কি অনুমোদন দিচ্ছেন?",
+                            f"⚠️️ **অনুমোদনের অনুরোধ:** এআই `{path}` ফাইলটি মুছে ফেলতে চাচ্ছে। আপনি কি অনুমোদন দিচ্ছেন?",
                             view=view
                         )
 
@@ -477,3 +498,4 @@ async def on_message(message):
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
+        
