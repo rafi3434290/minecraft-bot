@@ -14,7 +14,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Minecraft Assistant Bot is active & running!"
+    return "Smart Minecraft Assistant Bot is active & running!"
 
 def run():
     port = int(os.environ.get("PORT", 8080))
@@ -36,8 +36,8 @@ MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
 raw_api_keys = os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", ""))
 GEMINI_API_KEYS = [k.strip() for k in raw_api_keys.split(",") if k.strip()]
 
-# Official Working Gemini Models
-GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"]
+# Speed-Optimized Model Priority (Fastest model first)
+GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-3.8-flash"]
 
 # Memory File Path
 MEMORY_FILE = "memory.json"
@@ -102,7 +102,7 @@ def get_online_players() -> str:
     try:
         res = requests.post(url, headers=get_api_headers(), json={"command": "list"})
         if res.status_code == 204:
-            return "Sent '/list' command to server console. Please check latest logs or console output to see player list."
+            return "Sent '/list' command to server console. Check logs for response."
         return f"Failed to send list command. Status Code: {res.status_code}"
     except Exception as e:
         return f"API Error: {str(e)}"
@@ -190,8 +190,9 @@ def execute_file_deletion(file_path: str) -> str:
     except Exception as e:
         return f"Error deleting file: {str(e)}"
 
-# Tools Schema for Gemini AI
+# Tools Schema for Gemini AI (Includes Google Search Integration)
 server_tools = [
+    {"google_search": {}},  # Enables live Google Web Search capability
     get_server_resources,
     get_online_players,
     send_console_command,
@@ -205,7 +206,7 @@ server_tools = [
     execute_file_deletion
 ]
 
-# --- Smart Gemini API Call Handler with Retry & Key Rotation ---
+# --- Fast & Non-Blocking Gemini Call Handler ---
 async def generate_gemini_with_retry(prompt: str, sys_instruction: str):
     last_exception = None
     for api_key in GEMINI_API_KEYS:
@@ -216,9 +217,9 @@ async def generate_gemini_with_retry(prompt: str, sys_instruction: str):
             continue
 
         for model_name in GEMINI_MODELS:
-            for attempt in range(3):
-                try:
-                    response = client.models.generate_content(
+            try:
+                def sync_call():
+                    return client.models.generate_content(
                         model=model_name,
                         contents=prompt,
                         config=types.GenerateContentConfig(
@@ -226,17 +227,14 @@ async def generate_gemini_with_retry(prompt: str, sys_instruction: str):
                             tools=server_tools,
                         )
                     )
-                    return response
-                except Exception as err:
-                    err_msg = str(err)
-                    last_exception = err
-                    if "503" in err_msg or "UNAVAILABLE" in err_msg or "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                        await asyncio.sleep(2 ** attempt)
-                        continue
-                    else:
-                        break
+                # Runs sync API call in thread pool to prevent Discord bot freezing
+                response = await asyncio.to_thread(sync_call)
+                return response
+            except Exception as err:
+                last_exception = err
+                continue  # Fast fallback to next model
 
-    raise last_exception if last_exception else RuntimeError("All Gemini API keys and models failed to respond.")
+    raise last_exception if last_exception else RuntimeError("All API keys and models failed.")
 
 # --- Confirmation View for Owner Approval ---
 class ConfirmationView(View):
@@ -281,7 +279,7 @@ bot = discord.Client(intents=intents)
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name}!")
-    print("Minecraft AI Assistant is online with Intent-Based Safety Controls!")
+    print("Ultra-Smart Minecraft AI Assistant with Web Search & Context Memory is online!")
 
 @bot.event
 async def on_message(message):
@@ -294,28 +292,36 @@ async def on_message(message):
     msg_text = message.content.strip()
 
     async with message.channel.typing():
+        # Fetch last 5 messages for recent conversation context
+        recent_history = []
+        async for msg in message.channel.history(limit=5):
+            recent_history.append(f"{msg.author.name}: {msg.content}")
+        recent_history.reverse()
+        chat_context = "\n".join(recent_history)
+
         saved_rules = get_saved_memory()
 
         sys_instruction = (
-            "You are an expert Minecraft Paper 1.21.11 server administrator assistant inside Discord.\n"
-            "Long-Term Saved Memory:\n"
-            f"{saved_rules}\n\n"
-            "Instructions:\n"
-            "1. ALWAYS analyze the full intent of the user message before triggering any tools.\n"
-            "2. If the user mentions 'restart' or 'delete' purely as a rule, conversation, or memory setup, DO NOT invoke `execute_power_signal` or `execute_file_deletion`. Simply save it or answer.\n"
-            "3. ONLY invoke `execute_power_signal` or `execute_file_deletion` if the user explicitly orders you to restart, stop the server, or delete a file RIGHT NOW.\n"
-            "4. If asked to save a rule, use `save_memory_fact`."
+            "You are an extraordinarily intelligent, proactive, and expert Minecraft Paper 1.21.11 server administrator.\n"
+            f"Long-Term Saved Memory:\n{saved_rules}\n\n"
+            "Smart Operational Guidelines:\n"
+            "1. Always analyze the full context of the recent conversation before triggering any tool or making a decision.\n"
+            "2. If you do not know a plugin configuration, error solution, or Minecraft mechanic, USE Google Search tool automatically to find accurate information online.\n"
+            "3. Be extremely polite, natural, helpful, and conversational like a real human administrator.\n"
+            "4. If the user mentions 'restart' or 'delete' purely as a rule, note, or conversation, DO NOT invoke power or deletion tools.\n"
+            "5. ONLY invoke power signals or file deletions if the user explicitly orders you to restart, stop, or delete RIGHT NOW."
         )
 
+        full_prompt = f"Recent Conversation Context:\n{chat_context}\n\nUser Message: {msg_text}"
+
         try:
-            response = await generate_gemini_with_retry(msg_text, sys_instruction)
+            response = await generate_gemini_with_retry(full_prompt, sys_instruction)
 
             if response and response.function_calls:
                 for call in response.function_calls:
                     fn_name = call.name
                     args = call.args or {}
 
-                    # Intercept High-Risk Tools for Owner Confirmation Buttons
                     if fn_name == "execute_power_signal":
                         signal = args.get("signal", "restart")
                         view = ConfirmationView(MY_DISCORD_ID, "power", signal)
@@ -393,4 +399,4 @@ async def on_message(message):
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
-    
+            
