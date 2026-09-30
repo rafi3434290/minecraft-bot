@@ -1,23 +1,37 @@
 import os
+import threading
 import requests
 import discord
+from flask import Flask
 from google import genai
 from google.genai import types
 
-# ---------------- CONFIGURATION (Environment Variables) ----------------
-# সিকিউরিটির জন্য Environment Variable থেকে Key-গুলো নেওয়া হচ্ছে
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "YOUR_DISCORD_BOT_TOKEN")
+# --- Dummy Web Server for Render Free Tier ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is alive and running!"
+
+def run():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = threading.Thread(target=run)
+    t.start()
+# ---------------------------------------------
+
+# Configuration (Environment Variables)
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
 GODLIKE_PANEL_URL = "https://panel.godlike.host"
-GODLIKE_API_KEY = os.getenv("GODLIKE_API_KEY", "YOUR_GODLIKE_API_KEY")
-SERVER_ID = os.getenv("SERVER_ID", "YOUR_SERVER_ID")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
+GODLIKE_API_KEY = os.getenv("GODLIKE_API_KEY", "")
+SERVER_ID = os.getenv("SERVER_ID", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-# শুধুমাত্র আপনার Discord User ID (অন্য কেউ যাতে কমান্ড দিতে না পারে)
-# আপনার Discord Profile-এ গিয়ে Copy User ID করে এটি বসাবেন
-MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0")) 
-# ------------------------------------------------------------------------
+MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
 
-# Gemini Client Initialize
+# Initialize Gemini Client
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Tool 1: Console Command Function
@@ -49,7 +63,7 @@ def write_server_file(file_path: str, content: str) -> str:
     else:
         return f"Failed to write file. Status: {response.status_code}, Error: {response.text}"
 
-# Tool 3: File Read Function (ফাইল এডিট করার আগে পড়ার জন্য)
+# Tool 3: File Read Function
 def read_server_file(file_path: str) -> str:
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/files/contents?file={file_path}"
     headers = {
@@ -74,17 +88,15 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    # বট নিজের মেসেজ প্রসেস করবে না
     if message.author == bot.user:
         return
 
-    # সিকিউরিটি চেক: আপনি ছাড়া অন্য কেউ কমান্ড দিলে রেসপন্স করবে না
     if MY_DISCORD_ID != 0 and message.author.id != MY_DISCORD_ID:
         return
 
     async with message.channel.typing():
         sys_instruction = (
-            "You are an expert Minecraft paper server administrator assistant inside Discord. "
+            "You are an expert Minecraft server administrator assistant inside Discord. "
             "When asked to run a console command, read a file, or write/edit a config/file on the Godlike Minecraft server, "
             "always call the provided tools (`send_console_command`, `write_server_file`, `read_server_file`). "
             "Be precise with Minecraft config syntax (e.g. server.properties, plugin YAML files)."
@@ -100,7 +112,6 @@ async def on_message(message):
                 )
             )
 
-            # Gemini যদি কোনো টুল কল করতে চায়
             if response.function_calls:
                 for call in response.function_calls:
                     if call.name == "send_console_command":
@@ -121,13 +132,13 @@ async def on_message(message):
                             res = res[:1900] + "\n...(truncated due to length)"
                         await message.channel.send(f"📖 **File Content (`{path}`):**\n```\n{res}\n```")
 
-            # সাধারণ টেক্সট মেসেজ
             elif response.text:
                 await message.channel.send(response.text)
 
         except Exception as e:
             await message.channel.send(f"❌ Error processing request: {str(e)}")
 
-# Bot Run
 if __name__ == "__main__":
+    keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
+                
