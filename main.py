@@ -96,11 +96,14 @@ async def on_message(message):
         return
 
     async with message.channel.typing():
+        # Strict Verification + Search System Instructions
         sys_instruction = (
-            "You are an expert Minecraft server administrator assistant inside Discord. "
-            "When asked to run a console command, read a file, or write/edit a config/file on the Godlike Minecraft server, "
-            "always call the provided tools (`send_console_command`, `write_server_file`, `read_server_file`). "
-            "Be precise with Minecraft config syntax (e.g. server.properties, plugin YAML files)."
+            "You are an expert Minecraft server administrator inside Discord. "
+            "Before editing or writing any configuration file (YAML, properties, json): "
+            "1. ALWAYS read the existing file first using `read_server_file`. "
+            "2. If you are unfamiliar with a plugin, its options, or syntax, USE Google Search to find the official documentation/wiki first. "
+            "3. DOUBLE-CHECK all YAML formatting (correct indentation, spaces, quotes, colons) so no syntax errors occur. "
+            "4. Only write the file using `write_server_file` after thoroughly verifying accuracy."
         )
 
         # Automatic Retry System for 503 / High Demand Errors
@@ -114,7 +117,7 @@ async def on_message(message):
                     contents=message.content,
                     config=types.GenerateContentConfig(
                         system_instruction=sys_instruction,
-                        tools=[send_console_command, write_server_file, read_server_file],
+                        tools=[send_console_command, write_server_file, read_server_file, {"google_search": {}}],
                     )
                 )
                 break  # Successful response, exit loop
@@ -157,4 +160,3 @@ async def on_message(message):
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
-                                             
