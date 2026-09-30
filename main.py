@@ -6,15 +6,14 @@ import requests
 import discord
 from discord.ui import Button, View
 from flask import Flask
-from google import genai
-from google.genai import types
+from groq import Groq
 
 # --- Dummy Web Server for Render 24/7 Keep-Alive ---
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Smart Minecraft Assistant Bot is active & running!"
+    return "Ultra-Fast Minecraft Groq Bot is active!"
 
 def run():
     port = int(os.environ.get("PORT", 8080))
@@ -31,13 +30,7 @@ GODLIKE_PANEL_URL = "https://panel.godlike.host"
 GODLIKE_API_KEY = os.getenv("GODLIKE_API_KEY", "").strip()
 SERVER_ID = os.getenv("SERVER_ID", "").strip()
 MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
-
-# Multiple API Keys support
-raw_api_keys = os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", ""))
-GEMINI_API_KEYS = [k.strip() for k in raw_api_keys.split(",") if k.strip()]
-
-# Speed & Quota Optimized Models
-GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-3.8-flash"]
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
 # Memory File Path
 MEMORY_FILE = "memory.json"
@@ -53,7 +46,6 @@ def load_memory() -> dict:
     return {"rules": [], "notes": []}
 
 def save_memory_fact(fact_or_rule: str) -> str:
-    """Saves long-term instructions or rules given by the user to memory.json."""
     data = load_memory()
     if fact_or_rule not in data["rules"]:
         data["rules"].append(fact_or_rule)
@@ -63,7 +55,6 @@ def save_memory_fact(fact_or_rule: str) -> str:
     return "Rule is already saved in memory."
 
 def get_saved_memory() -> str:
-    """Returns saved long-term memories and rules."""
     data = load_memory()
     rules = data.get("rules", [])
     if not rules:
@@ -80,7 +71,6 @@ def get_api_headers(content_type="application/json"):
 
 # --- Safe / Non-Destructive Server Tools ---
 def get_server_resources() -> str:
-    """Fetches real-time server status (CPU, RAM, Disk, Online state)."""
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/resources"
     try:
         res = requests.get(url, headers=get_api_headers())
@@ -97,7 +87,6 @@ def get_server_resources() -> str:
         return f"API Error: {str(e)}"
 
 def get_online_players() -> str:
-    """Checks online players on the Minecraft server using console list command."""
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/command"
     try:
         res = requests.post(url, headers=get_api_headers(), json={"command": "list"})
@@ -108,7 +97,6 @@ def get_online_players() -> str:
         return f"API Error: {str(e)}"
 
 def send_console_command(command: str) -> str:
-    """Executes a console command on the Minecraft server."""
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/command"
     try:
         res = requests.post(url, headers=get_api_headers(), json={"command": command})
@@ -119,7 +107,6 @@ def send_console_command(command: str) -> str:
         return f"API Error: {str(e)}"
 
 def read_server_file(file_path: str) -> str:
-    """Reads content of a specified server file."""
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/files/contents?file={file_path}"
     headers = {"Authorization": f"Bearer {GODLIKE_API_KEY}", "Accept": "text/plain"}
     try:
@@ -131,7 +118,9 @@ def read_server_file(file_path: str) -> str:
         return f"Error reading file: {str(e)}"
 
 def write_server_file(file_path: str, content: str) -> str:
-    """Safely updates/writes content to a file after creating a .bak backup."""
+    if not content or len(content.strip()) == 0:
+        return "Error: Cannot write empty content to file."
+        
     existing = read_server_file(file_path)
     if existing and not existing.startswith("Failed to read"):
         backup_url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/files/write?file={file_path}.bak"
@@ -147,7 +136,6 @@ def write_server_file(file_path: str, content: str) -> str:
         return f"Error writing file: {str(e)}"
 
 def list_server_files(directory: str = "") -> str:
-    """Lists files/folders in a specified server directory."""
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/files/list?directory={directory}"
     try:
         res = requests.get(url, headers=get_api_headers())
@@ -159,16 +147,13 @@ def list_server_files(directory: str = "") -> str:
         return f"Error listing directory: {str(e)}"
 
 def read_latest_logs() -> str:
-    """Fetches the last 50 lines of logs/latest.log."""
     log_content = read_server_file("logs/latest.log")
     if log_content.startswith("Failed to read"):
         return log_content
     lines = log_content.strip().split("\n")
     return "Last 50 lines of logs:\n" + "\n".join(lines[-50:])
 
-# --- High-Risk Dangerous Actions ---
 def execute_power_signal(signal: str) -> str:
-    """Sends power state signal (start, stop, restart, kill) to server."""
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/power"
     try:
         res = requests.post(url, headers=get_api_headers(), json={"signal": signal})
@@ -179,7 +164,6 @@ def execute_power_signal(signal: str) -> str:
         return f"Error executing power action: {str(e)}"
 
 def execute_file_deletion(file_path: str) -> str:
-    """Deletes a file or directory from server."""
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/files/delete"
     payload = {"root": "/", "files": [file_path]}
     try:
@@ -190,49 +174,135 @@ def execute_file_deletion(file_path: str) -> str:
     except Exception as e:
         return f"Error deleting file: {str(e)}"
 
-# Tools Schema for Gemini AI
-server_tools = [
-    get_server_resources,
-    get_online_players,
-    send_console_command,
-    read_server_file,
-    write_server_file,
-    list_server_files,
-    read_latest_logs,
-    save_memory_fact,
-    get_saved_memory,
-    execute_power_signal,
-    execute_file_deletion
+# Groq Tools Schema Definition
+groq_tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_server_resources",
+            "description": "Fetches real-time server status (CPU, RAM, Disk, Online state)."
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_online_players",
+            "description": "Checks online players on the Minecraft server using console list command."
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_console_command",
+            "description": "Executes a console command on the Minecraft server.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "The command to run, e.g. 'op player'"}
+                },
+                "required": ["command"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_server_file",
+            "description": "Reads content of a specified server file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Relative path to file, e.g. 'plugins/Essentials/config.yml'"}
+                },
+                "required": ["file_path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_server_file",
+            "description": "Safely updates/writes content to a file after creating a .bak backup.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Relative path to file"},
+                    "content": {"type": "string", "description": "Full file content to write"}
+                },
+                "required": ["file_path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_server_files",
+            "description": "Lists files/folders in a specified server directory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "directory": {"type": "string", "description": "Directory path, e.g. 'plugins'"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_latest_logs",
+            "description": "Fetches the last 50 lines of logs/latest.log."
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_memory_fact",
+            "description": "Saves long-term instructions or rules given by the user to memory.json.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fact_or_rule": {"type": "string", "description": "Rule or fact to remember"}
+                },
+                "required": ["fact_or_rule"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_saved_memory",
+            "description": "Returns saved long-term memories and rules."
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_power_signal",
+            "description": "Sends power state signal (start, stop, restart, kill) to server.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "signal": {"type": "string", "description": "power signal e.g. 'restart'"}
+                },
+                "required": ["signal"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_file_deletion",
+            "description": "Deletes a file or directory from server.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Path to delete"}
+                },
+                "required": ["file_path"]
+            }
+        }
+    }
 ]
-
-# --- Fast & Non-Blocking Gemini Call Handler ---
-async def generate_gemini_with_retry(prompt: str, sys_instruction: str):
-    last_exception = None
-    for api_key in GEMINI_API_KEYS:
-        try:
-            client = genai.Client(api_key=api_key)
-        except Exception as e:
-            last_exception = e
-            continue
-
-        for model_name in GEMINI_MODELS:
-            try:
-                def sync_call():
-                    return client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            system_instruction=sys_instruction,
-                            tools=server_tools,
-                        )
-                    )
-                response = await asyncio.to_thread(sync_call)
-                return response
-            except Exception as err:
-                last_exception = err
-                continue  # Automatically fall back to next model or API key if quota error occurs
-
-    raise last_exception if last_exception else RuntimeError("All API keys and models failed.")
 
 # --- Confirmation View for Owner Approval ---
 class ConfirmationView(View):
@@ -257,7 +327,7 @@ class ConfirmationView(View):
             await interaction.followup.send(f"⚡ **সার্ভার অ্যাকশন রিপোর্ট:** {res}")
         elif self.action_type == "delete":
             res = execute_file_deletion(self.action_data)
-            await interaction.followup.send(f"🗑️ **ফাইল ডিলিট রিপোর্ট:** {res}")
+            await interaction.followup.send(f"🗑️️ **ফাইল ডিলিট রিপোর্ট:** {res}")
 
     @discord.ui.button(label="❌ বাতিল করুন", style=discord.ButtonStyle.red)
     async def cancel(self, interaction: discord.Interaction, button: Button):
@@ -277,7 +347,7 @@ bot = discord.Client(intents=intents)
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name}!")
-    print("Minecraft AI Assistant is online and stable!")
+    print("Groq Llama 3.3 Ultra-Fast AI Assistant is online!")
 
 @bot.event
 async def on_message(message):
@@ -290,9 +360,8 @@ async def on_message(message):
     msg_text = message.content.strip()
 
     async with message.channel.typing():
-        # Context history (last 3 messages to optimize quota)
         recent_history = []
-        async for msg in message.channel.history(limit=3):
+        async for msg in message.channel.history(limit=4):
             recent_history.append(f"{msg.author.name}: {msg.content}")
         recent_history.reverse()
         chat_context = "\n".join(recent_history)
@@ -300,23 +369,37 @@ async def on_message(message):
         saved_rules = get_saved_memory()
 
         sys_instruction = (
-            "You are an expert Minecraft Paper 1.21.11 server administrator.\n"
+            "You are an extraordinarily smart Minecraft Paper 1.21.11 server administrator powered by Groq Llama 3.3.\n"
             f"Long-Term Saved Memory:\n{saved_rules}\n\n"
             "Operational Guidelines:\n"
-            "1. Analyze recent context before triggering tools.\n"
-            "2. Be polite, direct, and concise.\n"
-            "3. ONLY invoke power signals or file deletions if the user explicitly orders you to restart, stop, or delete RIGHT NOW."
+            "1. When editing or writing files, ensure complete YAML syntax without missing lines.\n"
+            "2. ONLY invoke power signals or file deletions if the user explicitly orders you to restart, stop, or delete RIGHT NOW.\n"
+            "3. Be extremely precise, helpful, and natural."
         )
 
-        full_prompt = f"Context:\n{chat_context}\n\nUser Message: {msg_text}"
-
         try:
-            response = await generate_gemini_with_retry(full_prompt, sys_instruction)
+            client = Groq(api_key=GROQ_API_KEY)
+            
+            messages = [
+                {"role": "system", "content": sys_instruction},
+                {"role": "user", "content": f"Context:\n{chat_context}\n\nUser Message: {msg_text}"}
+            ]
 
-            if response and response.function_calls:
-                for call in response.function_calls:
-                    fn_name = call.name
-                    args = call.args or {}
+            def sync_groq():
+                return client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=messages,
+                    tools=groq_tools,
+                    tool_choice="auto"
+                )
+
+            response = await asyncio.to_thread(sync_groq)
+            msg_obj = response.choices[0].message
+
+            if msg_obj.tool_calls:
+                for tool_call in msg_obj.tool_calls:
+                    fn_name = tool_call.function.name
+                    args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
 
                     if fn_name == "execute_power_signal":
                         signal = args.get("signal", "restart")
@@ -380,8 +463,8 @@ async def on_message(message):
                         res = get_saved_memory()
                         await message.channel.send(f"📜 **সংরক্ষিত মেমোরি নিয়মাবলি:**\n{res}")
 
-            elif response and response.text:
-                res_text = response.text
+            elif msg_obj.content:
+                res_text = msg_obj.content
                 if len(res_text) > 1900:
                     for i in range(0, len(res_text), 1900):
                         await message.channel.send(res_text[i:i+1900])
@@ -389,10 +472,8 @@ async def on_message(message):
                     await message.channel.send(res_text)
 
         except Exception as err:
-            err_str = str(err)
-            await message.channel.send(f"❌ **Error details:** `{err_str[:1800]}`")
+            await message.channel.send(f"❌ **Error details:** `{str(err)[:1800]}`")
 
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
-                                  
