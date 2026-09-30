@@ -137,11 +137,11 @@ server_tools = [
     get_server_resources
 ]
 
-# Official Working Gemini Models (Primary: gemini-1.5-flash)
-MODELS_TO_TRY = ["gemini-1.5-flash", "gemini-2.0-flash"]
+# Official Working Model
+MODELS_TO_TRY = ["gemini-3.8-flash"]
 
 def generate_gemini_content(prompt: str, sys_instruction: str):
-    """Generates content trying available Gemini models."""
+    """Generates content using gemini-3.8-flash model."""
     last_error = None
     for model_name in MODELS_TO_TRY:
         try:
