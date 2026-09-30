@@ -32,13 +32,12 @@ GODLIKE_API_KEY = os.getenv("GODLIKE_API_KEY", "").strip()
 SERVER_ID = os.getenv("SERVER_ID", "").strip()
 MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
 
-# Multiple API Keys support (Comma-separated in GEMINI_API_KEYS or single GEMINI_API_KEY)
+# Multiple API Keys support
 raw_api_keys = os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", ""))
 GEMINI_API_KEYS = [k.strip() for k in raw_api_keys.split(",") if k.strip()]
 
-# ১০০% সচল ও ভ্যালিড মডেলের তালিকা
+# Official Working Gemini Models
 GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"]
-
 
 # Memory File Path
 MEMORY_FILE = "memory.json"
@@ -103,14 +102,13 @@ def get_online_players() -> str:
     try:
         res = requests.post(url, headers=get_api_headers(), json={"command": "list"})
         if res.status_code == 204:
-            # Wait brief moment for logs to update
             return "Sent '/list' command to server console. Please check latest logs or console output to see player list."
         return f"Failed to send list command. Status Code: {res.status_code}"
     except Exception as e:
         return f"API Error: {str(e)}"
 
 def send_console_command(command: str) -> str:
-    """Executes a safe console command on the Minecraft server."""
+    """Executes a console command on the Minecraft server."""
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/command"
     try:
         res = requests.post(url, headers=get_api_headers(), json={"command": command})
@@ -168,7 +166,7 @@ def read_latest_logs() -> str:
     lines = log_content.strip().split("\n")
     return "Last 50 lines of logs:\n" + "\n".join(lines[-50:])
 
-# --- Dangerous Action Tools Execution (Executed ONLY after Owner Confirmation) ---
+# --- High-Risk Dangerous Actions ---
 def execute_power_signal(signal: str) -> str:
     """Sends power state signal (start, stop, restart, kill) to server."""
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/power"
@@ -202,15 +200,15 @@ server_tools = [
     list_server_files,
     read_latest_logs,
     save_memory_fact,
-    get_saved_memory
+    get_saved_memory,
+    execute_power_signal,
+    execute_file_deletion
 ]
 
-# --- Smart Gemini API Call Handler with Exponential Retry & Key Rotation ---
+# --- Smart Gemini API Call Handler with Retry & Key Rotation ---
 async def generate_gemini_with_retry(prompt: str, sys_instruction: str):
-    """Retries API requests on 503/429 transient errors with exponential backoff and multi-key fallback."""
     last_exception = None
-
-    for key_idx, api_key in enumerate(GEMINI_API_KEYS):
+    for api_key in GEMINI_API_KEYS:
         try:
             client = genai.Client(api_key=api_key)
         except Exception as e:
@@ -218,7 +216,7 @@ async def generate_gemini_with_retry(prompt: str, sys_instruction: str):
             continue
 
         for model_name in GEMINI_MODELS:
-            for attempt in range(3): # Try up to 3 times per model
+            for attempt in range(3):
                 try:
                     response = client.models.generate_content(
                         model=model_name,
@@ -232,16 +230,15 @@ async def generate_gemini_with_retry(prompt: str, sys_instruction: str):
                 except Exception as err:
                     err_msg = str(err)
                     last_exception = err
-                    # If 503 or 429 occurs, sleep briefly and retry
                     if "503" in err_msg or "UNAVAILABLE" in err_msg or "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                        await asyncio.sleep(2 ** attempt) # 1s, 2s, 4s backoff
+                        await asyncio.sleep(2 ** attempt)
                         continue
                     else:
-                        break # Try next model or key for non-transient errors
+                        break
 
     raise last_exception if last_exception else RuntimeError("All Gemini API keys and models failed to respond.")
 
-# --- Confirmation View for High-Risk Admin Actions ---
+# --- Confirmation View for Owner Approval ---
 class ConfirmationView(View):
     def __init__(self, owner_id: int, action_type: str, action_data: str):
         super().__init__(timeout=60)
@@ -257,7 +254,7 @@ class ConfirmationView(View):
 
         for item in self.children:
             item.disabled = True
-        await interaction.response.edit_message(content="⏳ **অনুমোদন দেওয়া হয়েছে। কাজ শুরু হচ্ছে...**", view=self)
+        await interaction.response.edit_message(content="⏳ **অনুমোদন দেওয়া হয়েছে। কাজ সম্পন্ন হচ্ছে...**", view=self)
 
         if self.action_type == "power":
             res = execute_power_signal(self.action_data)
@@ -281,64 +278,33 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = discord.Client(intents=intents)
 
-# Short-term Chat History Session Memory
-channel_history = {}
-
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name}!")
-    print("Minecraft Advanced Server Admin Bot is running with full safety controls!")
+    print("Minecraft AI Assistant is online with Intent-Based Safety Controls!")
 
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
         return
 
-    # Security Check
     if MY_DISCORD_ID != 0 and message.author.id != MY_DISCORD_ID:
         return
 
     msg_text = message.content.strip()
 
-    # Manual Safety Triggers for High-Risk Requests
-    lower_text = msg_text.lower()
-
-    # Power Command Detection
-    for p_word in ["restart", "stop", "kill", "start", "রিস্টার্ট", "বন্ধ", "স্টার্ট"]:
-        if p_word in lower_text and any(k in lower_text for k in ["server", "সার্ভার", "কর্ড"]):
-            signal = "restart" if "restart" in lower_text or "রিস্টার্ট" in lower_text else ("stop" if "stop" in lower_text or "বন্ধ" in lower_text else "start")
-            view = ConfirmationView(MY_DISCORD_ID, "power", signal)
-            await message.channel.send(
-                f"⚠️ **অনুমোদনের অনুরোধ:** আপনি কি নিশ্চিত যে আপনি সার্ভার `{signal.upper()}` করতে চান?",
-                view=view
-            )
-            return
-
-    # Delete Command Detection
-    if "delete" in lower_text or "মুছে" in lower_text or "ডিলিট" in lower_text:
-        words = msg_text.split()
-        target_file = words[-1] if len(words) > 1 else ""
-        if target_file and "." in target_file:
-            view = ConfirmationView(MY_DISCORD_ID, "delete", target_file)
-            await message.channel.send(
-                f"⚠️ **অনুমোদনের অনুরোধ:** আপনি কি নিশ্চিত যে আপনি ফাইল `{target_file}` মুছে ফেলতে চান?",
-                view=view
-            )
-            return
-
     async with message.channel.typing():
-        # Retrieve Memory Rules
         saved_rules = get_saved_memory()
 
         sys_instruction = (
             "You are an expert Minecraft Paper 1.21.11 server administrator assistant inside Discord.\n"
-            "Long-Term Rules Memory:\n"
+            "Long-Term Saved Memory:\n"
             f"{saved_rules}\n\n"
-            "Safety & Administrative Guidelines:\n"
-            "1. Before editing any file, ALWAYS read it first with `read_server_file` or check directory using `list_server_files`.\n"
-            "2. When writing/editing YAML config files, ALWAYS double-check formatting and indentation rules.\n"
-            "3. If user asks to remember a permanent rule or preference, use `save_memory_fact` to record it.\n"
-            "4. Always notify the user if an automatic text backup (.bak) was created before writing files."
+            "Instructions:\n"
+            "1. ALWAYS analyze the full intent of the user message before triggering any tools.\n"
+            "2. If the user mentions 'restart' or 'delete' purely as a rule, conversation, or memory setup, DO NOT invoke `execute_power_signal` or `execute_file_deletion`. Simply save it or answer.\n"
+            "3. ONLY invoke `execute_power_signal` or `execute_file_deletion` if the user explicitly orders you to restart, stop the server, or delete a file RIGHT NOW.\n"
+            "4. If asked to save a rule, use `save_memory_fact`."
         )
 
         try:
@@ -349,7 +315,24 @@ async def on_message(message):
                     fn_name = call.name
                     args = call.args or {}
 
-                    if fn_name == "get_server_resources":
+                    # Intercept High-Risk Tools for Owner Confirmation Buttons
+                    if fn_name == "execute_power_signal":
+                        signal = args.get("signal", "restart")
+                        view = ConfirmationView(MY_DISCORD_ID, "power", signal)
+                        await message.channel.send(
+                            f"⚠️ **অনুমোদনের অনুরোধ:** এআই সার্ভারটি `{signal.upper()}` করতে চাচ্ছে। আপনি কি অনুমোদন দিচ্ছেন?",
+                            view=view
+                        )
+
+                    elif fn_name == "execute_file_deletion":
+                        path = args.get("file_path", "")
+                        view = ConfirmationView(MY_DISCORD_ID, "delete", path)
+                        await message.channel.send(
+                            f"⚠️ **অনুমোদনের অনুরোধ:** এআই `{path}` ফাইলটি মুছে ফেলতে চাচ্ছে। আপনি কি অনুমোদন দিচ্ছেন?",
+                            view=view
+                        )
+
+                    elif fn_name == "get_server_resources":
                         res = get_server_resources()
                         await message.channel.send(res)
 
@@ -410,4 +393,4 @@ async def on_message(message):
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
-        
+    
