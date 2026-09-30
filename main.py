@@ -31,9 +31,6 @@ SERVER_ID = os.getenv("SERVER_ID", "").strip()
 MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
-# Groq's Current Active Production Model with Full Tool Support
-ACTIVE_GROQ_MODEL = "llama-3.3-70b-versatile"
-
 MEMORY_FILE = "memory.json"
 
 def load_memory() -> dict:
@@ -351,10 +348,19 @@ async def send_split_message(channel, text: str):
             chunk = text[i:i+1900]
             await channel.send(chunk)
 
+def fetch_live_groq_models(client: Groq) -> list:
+    """Live-fetches active chat models accessible by the user's API key."""
+    try:
+        models_data = client.models.list()
+        live_models = [m.id for m in models_data.data if "whisper" not in m.id and "safetensors" not in m.id]
+        return live_models
+    except Exception:
+        return []
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name}!")
-    print(f"Groq Bot running on {ACTIVE_GROQ_MODEL}!")
+    print("Groq Bot with Live Model Auto-Detection is Online!")
 
 @bot.event
 async def on_message(message):
@@ -388,22 +394,41 @@ async def on_message(message):
 
         try:
             client = Groq(api_key=GROQ_API_KEY)
-
+            
+            # 1. Fetch real-time available models directly from Groq API
+            live_models = fetch_live_groq_models(client)
+            
             messages = [
                 {"role": "system", "content": sys_instruction},
                 {"role": "user", "content": f"Context:\n{chat_context}\n\nUser Message: {msg_text}"}
             ]
 
-            def call_groq():
-                return client.chat.completions.create(
-                    model=ACTIVE_GROQ_MODEL,
-                    messages=messages,
-                    tools=groq_tools,
-                    tool_choice="auto",
-                    max_tokens=500
-                )
+            response = None
+            last_err = None
 
-            response = await asyncio.to_thread(call_groq)
+            # 2. Iterate through currently live models on your API key until one responds
+            for model_id in live_models:
+                try:
+                    def call_groq(m=model_id):
+                        return client.chat.completions.create(
+                            model=m,
+                            messages=messages,
+                            tools=groq_tools,
+                            tool_choice="auto",
+                            max_tokens=500
+                        )
+
+                    response = await asyncio.to_thread(call_groq)
+                    if response:
+                        break
+                except Exception as m_err:
+                    last_err = m_err
+                    continue
+
+            # Fallback attempt if live models list failed or didn't respond with tools
+            if not response:
+                raise Exception(f"Unable to connect to active Groq models. Details: {last_err}")
+
             msg_obj = response.choices[0].message
 
             if msg_obj.tool_calls:
