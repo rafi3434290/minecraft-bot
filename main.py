@@ -31,13 +31,8 @@ SERVER_ID = os.getenv("SERVER_ID", "").strip()
 MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
-# Strictly ONLY Groq Models that Support Function Calling / Tools
-TOOL_SUPPORTED_MODELS = [
-    "llama-3.3-70b-versatile",
-    "llama-3.1-70b-versatile",
-    "llama3-groq-70b-8192-tool-use-preview",
-    "mixtral-8x7b-32768"
-]
+# Groq's Current Active Production Model with Full Tool Support
+ACTIVE_GROQ_MODEL = "llama-3.3-70b-versatile"
 
 MEMORY_FILE = "memory.json"
 
@@ -359,7 +354,7 @@ async def send_split_message(channel, text: str):
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name}!")
-    print("Groq Bot with Verified Tool-Supported Models is Online!")
+    print(f"Groq Bot running on {ACTIVE_GROQ_MODEL}!")
 
 @bot.event
 async def on_message(message):
@@ -399,31 +394,16 @@ async def on_message(message):
                 {"role": "user", "content": f"Context:\n{chat_context}\n\nUser Message: {msg_text}"}
             ]
 
-            response = None
-            last_error = None
+            def call_groq():
+                return client.chat.completions.create(
+                    model=ACTIVE_GROQ_MODEL,
+                    messages=messages,
+                    tools=groq_tools,
+                    tool_choice="auto",
+                    max_tokens=500
+                )
 
-            # Strictly iterate ONLY over tool-compatible models
-            for model_name in TOOL_SUPPORTED_MODELS:
-                try:
-                    def call_groq(m=model_name):
-                        return client.chat.completions.create(
-                            model=m,
-                            messages=messages,
-                            tools=groq_tools,
-                            tool_choice="auto",
-                            max_completion_tokens=500
-                        )
-
-                    response = await asyncio.to_thread(call_groq)
-                    if response:
-                        break
-                except Exception as m_err:
-                    last_error = m_err
-                    continue
-
-            if not response:
-                raise Exception(f"Tool-supported models failed. Error: {last_error}")
-
+            response = await asyncio.to_thread(call_groq)
             msg_obj = response.choices[0].message
 
             if msg_obj.tool_calls:
@@ -499,4 +479,3 @@ async def on_message(message):
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
-            
