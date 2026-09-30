@@ -72,15 +72,13 @@ def read_server_file(file_path: str) -> str:
 
 # --- TOOL 3: Safe Write File (Auto-Backup Included) ---
 def write_server_file(file_path: str, content: str) -> str:
-    """Safely writes content to a file after creating an automatic backup (.bak)."""
-    # Step 1: Create a backup of the original file if it exists
+    """Safely writes content to a file after creating an automatic text backup (.bak)."""
     existing_content = read_server_file(file_path)
     if existing_content and not existing_content.startswith("Failed to read"):
         backup_path = f"{file_path}.bak"
         backup_url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/files/write?file={backup_path}"
         requests.post(backup_url, headers=get_api_headers("text/plain"), data=existing_content)
 
-    # Step 2: Write new content to the target file
     url = f"{GODLIKE_PANEL_URL}/api/client/servers/{SERVER_ID}/files/write?file={file_path}"
     try:
         response = requests.post(url, headers=get_api_headers("text/plain"), data=content)
@@ -131,6 +129,41 @@ def get_server_resources() -> str:
     except Exception as e:
         return f"Error fetching stats: {str(e)}"
 
+# Server Management Tools Array
+server_tools = [
+    send_console_command,
+    read_server_file,
+    write_server_file,
+    list_server_files,
+    read_latest_logs,
+    get_server_resources
+]
+
+# Standard Supported Gemini Models
+MODELS_TO_TRY = ["gemini-2.0-flash", "gemini-1.5-flash"]
+
+def generate_gemini_content(prompt: str, sys_instruction: str):
+    """Generates content trying available Gemini models."""
+    last_error = None
+    for model_name in MODELS_TO_TRY:
+        try:
+            res = gemini_client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=sys_instruction,
+                    tools=server_tools,
+                )
+            )
+            return res
+        except Exception as e:
+            last_error = e
+            err_msg = str(e)
+            if "404" in err_msg or "NOT_FOUND" in err_msg:
+                continue
+            raise e
+    raise last_error
+
 # --- Discord Bot Setup ---
 intents = discord.Intents.default()
 intents.message_content = True
@@ -139,7 +172,7 @@ bot = discord.Client(intents=intents)
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name}!")
-    print("Advanced Minecraft Admin Bot is online and fully active!")
+    print("Advanced Minecraft Paper Server Admin Bot is online and ready!")
 
 @bot.event
 async def on_message(message):
@@ -151,55 +184,22 @@ async def on_message(message):
         return
 
     async with message.channel.typing():
-        # System Instruction for Expert Management & Safety
         sys_instruction = (
-            "You are an expert Minecraft Paper 1.21.11 server administrator assistant inside Discord.\n"
+            "You are an expert Minecraft Paper 1.21.1 server administrator assistant inside Discord.\n"
             "Safety & Accuracy Rules:\n"
             "1. Before editing any file, ALWAYS read it first with `read_server_file` or check directory files using `list_server_files`.\n"
             "2. When writing/editing YAML config files, ALWAYS double-check spacing, quotes, and YAML indentation rules carefully.\n"
-            "3. If unfamiliar with a plugin or its settings, use `google_search` to find official plugin documentation/wiki first.\n"
-            "4. If the user reports server errors or crashes, check `read_latest_logs` or `get_server_resources` to diagnose.\n"
-            "5. Always notify the user if an automatic file backup (.bak) was created before making changes."
+            "3. If the user reports server errors or crashes, check `read_latest_logs` or `get_server_resources` to diagnose.\n"
+            "4. Always notify the user if an automatic text backup (.bak) was created before making changes."
         )
 
-        all_tools = [
-            send_console_command,
-            read_server_file,
-            write_server_file,
-            list_server_files,
-            read_latest_logs,
-            get_server_resources,
-            {"google_search": {}}
-        ]
-
-        # Auto-retry loop for 503 High Demand Error handling
-        max_retries = 3
-        response = None
-
-        for attempt in range(max_retries):
-            try:
-                response = gemini_client.models.generate_content(
-                    model="gemini-3.8-flash",
-                    contents=message.content,
-                    config=types.GenerateContentConfig(
-                        system_instruction=sys_instruction,
-                        tools=all_tools,
-                    )
-                )
-                break
-            except Exception as err:
-                if ("503" in str(err) or "UNAVAILABLE" in str(err)) and attempt < max_retries - 1:
-                    await asyncio.sleep(3)
-                    continue
-                else:
-                    await message.channel.send(f"❌ **Error processing request:** `{str(err)}`")
-                    return
-
         try:
+            response = generate_gemini_content(message.content, sys_instruction)
+
             if response and response.function_calls:
                 for call in response.function_calls:
                     fn_name = call.name
-                    args = call.args
+                    args = call.args or {}
 
                     if fn_name == "send_console_command":
                         cmd = args.get("command")
@@ -235,10 +235,21 @@ async def on_message(message):
                         await message.channel.send(f"{res}")
 
             elif response and response.text:
-                await message.channel.send(response.text)
+                res_text = response.text
+                if len(res_text) > 1900:
+                    for i in range(0, len(res_text), 1900):
+                        await message.channel.send(res_text[i:i+1900])
+                else:
+                    await message.channel.send(res_text)
 
-        except Exception as e:
-            await message.channel.send(f"❌ **Error executing response:** `{str(e)}`")
+        except Exception as err:
+            err_str = str(err)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                await message.channel.send("⚠️ **Gemini API-এর স্পিড লিমিট স্পর্শ করেছে।** অনুগ্রহ করে ১ মিনিট পর আবার চেষ্টা করুন।")
+            elif "404" in err_str or "NOT_FOUND" in err_str:
+                await message.channel.send("❌ **Model Not Found Error:** Gemini API Key বা মডেলটিতে কোনো সমস্যা রয়েছে।")
+            else:
+                await message.channel.send(f"❌ **Error processing request:** `{err_str}`")
 
 if __name__ == "__main__":
     keep_alive()
