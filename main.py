@@ -36,7 +36,7 @@ MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
 raw_api_keys = os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", ""))
 GEMINI_API_KEYS = [k.strip() for k in raw_api_keys.split(",") if k.strip()]
 
-# Speed-Optimized Model Priority (Fastest model first)
+# Speed & Quota Optimized Models
 GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-3.8-flash"]
 
 # Memory File Path
@@ -190,9 +190,8 @@ def execute_file_deletion(file_path: str) -> str:
     except Exception as e:
         return f"Error deleting file: {str(e)}"
 
-# Tools Schema for Gemini AI (Includes Google Search Integration)
+# Tools Schema for Gemini AI
 server_tools = [
-    {"google_search": {}},  # Enables live Google Web Search capability
     get_server_resources,
     get_online_players,
     send_console_command,
@@ -227,12 +226,11 @@ async def generate_gemini_with_retry(prompt: str, sys_instruction: str):
                             tools=server_tools,
                         )
                     )
-                # Runs sync API call in thread pool to prevent Discord bot freezing
                 response = await asyncio.to_thread(sync_call)
                 return response
             except Exception as err:
                 last_exception = err
-                continue  # Fast fallback to next model
+                continue  # Automatically fall back to next model or API key if quota error occurs
 
     raise last_exception if last_exception else RuntimeError("All API keys and models failed.")
 
@@ -279,7 +277,7 @@ bot = discord.Client(intents=intents)
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name}!")
-    print("Ultra-Smart Minecraft AI Assistant with Web Search & Context Memory is online!")
+    print("Minecraft AI Assistant is online and stable!")
 
 @bot.event
 async def on_message(message):
@@ -292,9 +290,9 @@ async def on_message(message):
     msg_text = message.content.strip()
 
     async with message.channel.typing():
-        # Fetch last 5 messages for recent conversation context
+        # Context history (last 3 messages to optimize quota)
         recent_history = []
-        async for msg in message.channel.history(limit=5):
+        async for msg in message.channel.history(limit=3):
             recent_history.append(f"{msg.author.name}: {msg.content}")
         recent_history.reverse()
         chat_context = "\n".join(recent_history)
@@ -302,17 +300,15 @@ async def on_message(message):
         saved_rules = get_saved_memory()
 
         sys_instruction = (
-            "You are an extraordinarily intelligent, proactive, and expert Minecraft Paper 1.21.11 server administrator.\n"
+            "You are an expert Minecraft Paper 1.21.11 server administrator.\n"
             f"Long-Term Saved Memory:\n{saved_rules}\n\n"
-            "Smart Operational Guidelines:\n"
-            "1. Always analyze the full context of the recent conversation before triggering any tool or making a decision.\n"
-            "2. If you do not know a plugin configuration, error solution, or Minecraft mechanic, USE Google Search tool automatically to find accurate information online.\n"
-            "3. Be extremely polite, natural, helpful, and conversational like a real human administrator.\n"
-            "4. If the user mentions 'restart' or 'delete' purely as a rule, note, or conversation, DO NOT invoke power or deletion tools.\n"
-            "5. ONLY invoke power signals or file deletions if the user explicitly orders you to restart, stop, or delete RIGHT NOW."
+            "Operational Guidelines:\n"
+            "1. Analyze recent context before triggering tools.\n"
+            "2. Be polite, direct, and concise.\n"
+            "3. ONLY invoke power signals or file deletions if the user explicitly orders you to restart, stop, or delete RIGHT NOW."
         )
 
-        full_prompt = f"Recent Conversation Context:\n{chat_context}\n\nUser Message: {msg_text}"
+        full_prompt = f"Context:\n{chat_context}\n\nUser Message: {msg_text}"
 
         try:
             response = await generate_gemini_with_retry(full_prompt, sys_instruction)
@@ -399,4 +395,4 @@ async def on_message(message):
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
-            
+                                  
