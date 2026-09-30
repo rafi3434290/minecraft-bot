@@ -32,15 +32,6 @@ SERVER_ID = os.getenv("SERVER_ID", "").strip()
 MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
-# Active Groq models only
-GROQ_MODELS = [
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
-    "llama3-70b-8192",
-    "llama3-8b-8192",
-    "gemma2-9b-it"
-]
-
 # Memory File Path
 MEMORY_FILE = "memory.json"
 
@@ -69,6 +60,30 @@ def get_saved_memory() -> str:
     if not rules:
         return "No specific long-term rules saved yet."
     return "Saved Server Rules & Notes:\n" + "\n".join([f"- {r}" for r in rules])
+
+# --- Dynamic Groq Active Model Finder ---
+def get_best_active_model(client: Groq) -> str:
+    """Fetches real-time active models directly from Groq API to avoid decommissioned errors."""
+    preferred_models = [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "llama-3.2-11b-vision-instruct",
+        "llama-3.2-3b-preview"
+    ]
+    try:
+        live_models = client.models.list()
+        active_model_ids = [m.id for m in live_models.data if getattr(m, 'active', True)]
+        
+        for pref in preferred_models:
+            if pref in active_model_ids:
+                return pref
+        
+        if active_model_ids:
+            return active_model_ids[0]
+    except Exception:
+        pass
+    
+    return "llama-3.1-8b-instant"
 
 # --- Godlike Panel API Headers ---
 def get_api_headers(content_type="application/json"):
@@ -356,7 +371,7 @@ bot = discord.Client(intents=intents)
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name}!")
-    print("Groq Ultra-Fast AI Assistant is online!")
+    print("Groq Dynamic AI Assistant is online!")
 
 @bot.event
 async def on_message(message):
@@ -389,32 +404,23 @@ async def on_message(message):
         try:
             client = Groq(api_key=GROQ_API_KEY)
             
+            # Dynamically fetch the current active model from Groq API
+            active_model = get_best_active_model(client)
+
             messages = [
                 {"role": "system", "content": sys_instruction},
                 {"role": "user", "content": f"Context:\n{chat_context}\n\nUser Message: {msg_text}"}
             ]
 
-            response = None
-            last_err = None
+            def sync_groq():
+                return client.chat.completions.create(
+                    model=active_model,
+                    messages=messages,
+                    tools=groq_tools,
+                    tool_choice="auto"
+                )
 
-            for model_name in GROQ_MODELS:
-                try:
-                    def sync_groq(m_name):
-                        return client.chat.completions.create(
-                            model=m_name,
-                            messages=messages,
-                            tools=groq_tools,
-                            tool_choice="auto"
-                        )
-                    response = await asyncio.to_thread(sync_groq, model_name)
-                    break
-                except Exception as e:
-                    last_err = e
-                    continue
-
-            if not response:
-                raise last_err if last_err else RuntimeError("All Groq models failed.")
-
+            response = await asyncio.to_thread(sync_groq)
             msg_obj = response.choices[0].message
 
             if msg_obj.tool_calls:
