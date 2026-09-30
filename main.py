@@ -36,8 +36,9 @@ MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
 raw_api_keys = os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", ""))
 GEMINI_API_KEYS = [k.strip() for k in raw_api_keys.split(",") if k.strip()]
 
-# Backup Stable Models
-GEMINI_MODELS = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
+# ১০০% সচল ও ভ্যালিড মডেলের তালিকা
+GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"]
+
 
 # Memory File Path
 MEMORY_FILE = "memory.json"
