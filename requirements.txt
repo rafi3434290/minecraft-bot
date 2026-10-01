@@ -1,4 +1,5 @@
 discord.py
 flask
-requests
 groq
+google-generativeai
+requests
