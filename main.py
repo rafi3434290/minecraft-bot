@@ -6,8 +6,12 @@ import requests
 import discord
 from discord.ui import Button, View
 from flask import Flask
+from dotenv import load_dotenv
 from groq import Groq
 import google.generativeai as genai
+
+# Local .env ফাইল থেকে Environment Variables লোড করা
+load_dotenv()
 
 # --- Keep-Alive Web Server for Render/Replit ---
 app = Flask('')
@@ -32,10 +36,6 @@ SERVER_ID = os.getenv("SERVER_ID", "").strip()
 MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-
-# Configure Gemini
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
 MEMORY_FILE = "memory.json"
 
@@ -236,13 +236,13 @@ class ConfirmationView(View):
         await interaction.response.edit_message(content="⏳ **অনুমোদন দেওয়া হয়েছে। কাজ সম্পন্ন হচ্ছে...**", view=self)
 
         if self.action_type == "power":
-            res = execute_power_signal(self.action_data)
+            res = await asyncio.to_thread(execute_power_signal, self.action_data)
             await send_split_message(interaction.channel, f"⚡ **সার্ভার অ্যাকশন রিপোর্ট:** {res}")
         elif self.action_type == "delete":
-            res = execute_file_deletion(self.action_data)
+            res = await asyncio.to_thread(execute_file_deletion, self.action_data)
             await send_split_message(interaction.channel, f"🗑 **ফাইল ডিলিট রিপোর্ট:** {res}")
         elif self.action_type == "command":
-            res = send_console_command(self.action_data)
+            res = await asyncio.to_thread(send_console_command, self.action_data)
             await send_split_message(interaction.channel, f"⚙️ **Sensitive Console Command Executed:** `{self.action_data}`\n📄 **Result:** {res}")
 
     @discord.ui.button(label="❌ বাতিল করুন (Cancel)", style=discord.ButtonStyle.red)
@@ -272,62 +272,66 @@ async def send_split_message(channel, text: str):
             chunk = text[i:i+1900]
             await channel.send(chunk)
 
-# --- AI FALLBACK ENGINE (GROQ -> GEMINI) ---
+# --- DUAL AI ENGINE WITH DETAILED DIAGNOSTICS ---
 async def query_ai_with_fallback(sys_instruction: str, user_prompt: str):
-    """Tries Groq (70B Smart Models) first. On rate-limit or error, falls back to Gemini 2.0/1.5 Flash."""
-    
-    # Preferred Groq Models (Smartest 70B Class)
-    groq_preferred_models = ["llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b", "llama3-70b-8192"]
-    
-    messages = [
-        {"role": "system", "content": sys_instruction},
-        {"role": "user", "content": user_prompt}
-    ]
+    """Tries Groq (70B Smart Model) first. On error, falls back to Gemini Flash."""
+    errors_log = []
 
-    # 1. Attempt Groq
+    # 1. GROQ ATTEMPT
     if GROQ_API_KEY:
         try:
             client = Groq(api_key=GROQ_API_KEY)
-            for model_id in groq_preferred_models:
+            groq_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+            
+            for model_id in groq_models:
                 try:
-                    def call_groq():
+                    def call_groq(m=model_id):
                         return client.chat.completions.create(
-                            model=model_id,
-                            messages=messages,
+                            model=m,
+                            messages=[
+                                {"role": "system", "content": sys_instruction},
+                                {"role": "user", "content": user_prompt}
+                            ],
                             tools=groq_tools,
                             tool_choice="auto",
-                            max_tokens=800
+                            max_tokens=1000
                         )
                     res = await asyncio.to_thread(call_groq)
                     return ("groq", res.choices[0].message)
-                except Exception:
-                    continue
-        except Exception as e:
-            print(f"Groq API Error, switching to Gemini: {e}")
+                except Exception as m_err:
+                    errors_log.append(f"Groq ({model_id}) Error: {str(m_err)}")
+        except Exception as g_err:
+            errors_log.append(f"Groq Init Error: {str(g_err)}")
+    else:
+        errors_log.append("`GROQ_API_KEY` missing in Environment Variables.")
 
-    # 2. Fallback to Gemini API if Groq fails or rate-limits
+    # 2. GEMINI FALLBACK ATTEMPT
     if GEMINI_API_KEY:
         try:
+            genai.configure(api_key=GEMINI_API_KEY)
             def call_gemini():
-                # Gemini 2.0 / 1.5 Flash
-                gemini_model = genai.GenerativeModel(
-                    model_name='gemini-2.0-flash',
+                model = genai.GenerativeModel(
+                    model_name='gemini-1.5-flash',
                     system_instruction=sys_instruction
                 )
-                response = gemini_model.generate_content(user_prompt)
+                response = model.generate_content(user_prompt)
                 return response.text
 
             text_res = await asyncio.to_thread(call_gemini)
-            return ("gemini_text", text_res)
+            return ("gemini", text_res)
         except Exception as gem_err:
-            print(f"Gemini API Error: {gem_err}")
+            errors_log.append(f"Gemini API Error: {str(gem_err)}")
+    else:
+        errors_log.append("`GEMINI_API_KEY` missing in Environment Variables.")
 
-    raise Exception("Both Groq and Gemini APIs failed or are unconfigured.")
+    # Show exact details if both fail
+    error_summary = "\n".join([f"• {e}" for e in errors_log])
+    raise Exception(f"All AI Providers Failed:\n{error_summary}")
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name}!")
-    print("Dual AI (Groq + Gemini Backup) Minecraft Manager is ready.")
+    print("Dual AI (Groq + Gemini Backup) Minecraft Manager is active.")
 
 @bot.event
 async def on_message(message):
@@ -342,7 +346,7 @@ async def on_message(message):
         return
 
     async with message.channel.typing():
-        # Chat history context
+        # Chat context
         recent_history = []
         async for msg in message.channel.history(limit=3):
             recent_history.append(f"{msg.author.name}: {msg.content[:200]}")
@@ -397,35 +401,35 @@ async def on_message(message):
                                     view=view
                                 )
                             else:
-                                res = send_console_command(cmd)
+                                res = await asyncio.to_thread(send_console_command, cmd)
                                 await send_split_message(message.channel, f"⚙️ **Console Executed:** `{cmd}`\n📄 **Result:** {res}")
 
                         elif fn_name == "get_server_resources":
-                            res = get_server_resources()
+                            res = await asyncio.to_thread(get_server_resources)
                             await send_split_message(message.channel, res)
 
                         elif fn_name == "get_online_players":
-                            res = get_online_players()
+                            res = await asyncio.to_thread(get_online_players)
                             await send_split_message(message.channel, f"👥 **প্লেয়ার লিস্ট স্ট্যাটাস:** {res}")
 
                         elif fn_name == "write_server_file":
-                            path = args.get("file_path")
+                             path = args.get("file_path")
                             content = args.get("content")
-                            res = write_server_file(path, content)
+                            res = await asyncio.to_thread(write_server_file, path, content)
                             await send_split_message(message.channel, f"📝 **File Saved:** `{path}`\n📄 **Result:** {res}")
 
                         elif fn_name == "read_server_file":
                             path = args.get("file_path")
-                            res = read_server_file(path)
+                            res = await asyncio.to_thread(read_server_file, path)
                             await send_split_message(message.channel, f"📖 **File Content (`{path}`):**\n```yaml\n{res[:1800]}\n```")
 
                         elif fn_name == "list_server_files":
                             directory = args.get("directory", "")
-                            res = list_server_files(directory)
+                            res = await asyncio.to_thread(list_server_files, directory)
                             await send_split_message(message.channel, f"📁 **Directory List:**\n{res}")
 
                         elif fn_name == "read_latest_logs":
-                            res = read_latest_logs()
+                            res = await asyncio.to_thread(read_latest_logs)
                             await send_split_message(message.channel, f"📋 **Server Logs:**\n```log\n{res[:1800]}\n```")
 
                         elif fn_name == "save_memory_fact":
@@ -440,11 +444,11 @@ async def on_message(message):
                 elif msg_obj.content:
                     await send_split_message(message.channel, msg_obj.content)
 
-            elif source == "gemini_text":
+            elif source == "gemini":
                 await send_split_message(message.channel, f"🟢 **[Gemini Backup Mode]:**\n{ai_response}")
 
         except Exception as err:
-            err_str = f"❌ **Error details:** `{str(err)[:1800]}`"
+            err_str = f"❌ **Error details:**\n```{str(err)[:1800]}```"
             await send_split_message(message.channel, err_str)
 
 if __name__ == "__main__":
@@ -452,4 +456,4 @@ if __name__ == "__main__":
     if DISCORD_BOT_TOKEN:
         bot.run(DISCORD_BOT_TOKEN)
     else:
-        print("Error: DISCORD_BOT_TOKEN is not set.")
+        print("Error: DISCORD_BOT_TOKEN is not set in Environment Variables.")
