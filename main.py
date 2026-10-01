@@ -15,7 +15,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Minecraft Gemini Assistant Bot is Active & Running!"
+    return "Minecraft Gemini Multi-Key Assistant Bot is Active & Running!"
 
 def run():
     port = int(os.environ.get("PORT", 8080))
@@ -25,16 +25,17 @@ def keep_alive():
     t = threading.Thread(target=run)
     t.start()
 
-# --- 2. Environment Variables ---
+# --- 2. Environment Variables & Multi-Key Setup ---
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "").strip()
 GODLIKE_PANEL_URL = "https://panel.godlike.host"
 GODLIKE_API_KEY = os.getenv("GODLIKE_API_KEY", "").strip()
 SERVER_ID = os.getenv("SERVER_ID", "").strip()
 MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+# Parse multiple comma-separated Gemini API Keys
+raw_keys = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_API_KEYS = [k.strip() for k in raw_keys.split(",") if k.strip()]
+current_key_index = 0
 
 MEMORY_FILE = "memory.json"
 
@@ -65,7 +66,7 @@ def get_saved_memory() -> str:
         return "No saved memory or plugin solutions yet."
     return "Saved Server Rules & Learned Solutions:\n" + "\n".join([f"- {r}" for r in rules])
 
-# --- 4. Internet Search Tool for Plugins & Minecraft Error Fixes ---
+# --- 4. Internet Search Tool ---
 def search_internet(query: str) -> str:
     """Searches the internet for Minecraft plugin configs, error fixes, or general info."""
     try:
@@ -180,34 +181,65 @@ def execute_file_deletion(file_path: str) -> str:
     except Exception as e:
         return f"Error deleting file: {str(e)}"
 
-# --- 6. Valid Active Gemini Model Selection ---
-def get_active_gemini_model_name():
-    if not GEMINI_API_KEY:
-        return None
-    try:
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        # Valid non-deprecated models
-        preferred_list = [
-            'models/gemini-1.5-flash',
-            'models/gemini-2.0-flash',
-            'models/gemini-1.5-flash-latest',
-            'models/gemini-1.5-pro'
-        ]
-        
-        for pref in preferred_list:
-            if pref in available_models:
-                return pref
-        
-        for m_name in available_models:
-            if ('flash' in m_name or 'pro' in m_name) and '2.5' not in m_name:
-                return m_name
-                
-        if available_models:
-            return available_models[0]
-    except Exception as e:
-        print(f"Model listing error: {e}")
-    return 'models/gemini-1.5-flash'
+# --- 6. Smart Multi-API Key Executor with Automatic Rotation ---
+def generate_response_with_key_rotation(msg: str, sys_instruction: str, tools_list: list) -> str:
+    global current_key_index
+
+    if not GEMINI_API_KEYS:
+        return "❌ কোনো GEMINI_API_KEY পাওয়া যায়নি। Render-এ API Key যুক্ত করুন।"
+
+    total_keys = len(GEMINI_API_KEYS)
+    attempts = 0
+
+    while attempts < total_keys:
+        active_key = GEMINI_API_KEYS[current_key_index]
+        try:
+            genai.configure(api_key=active_key)
+
+            # Detect active Gemini models
+            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            
+            preferred = [
+                'models/gemini-1.5-flash',
+                'models/gemini-2.0-flash',
+                'models/gemini-1.5-flash-latest',
+                'models/gemini-1.5-pro'
+            ]
+            
+            selected_model_name = 'models/gemini-1.5-flash'
+            for p in preferred:
+                if p in available_models:
+                    selected_model_name = p
+                    break
+
+            model = genai.GenerativeModel(
+                model_name=selected_model_name,
+                tools=tools_list,
+                system_instruction=sys_instruction
+            )
+            chat = model.start_chat(enable_automatic_function_calling=True)
+            res = chat.send_message(msg)
+
+            if res.text:
+                return res.text
+            return "⚠️ Gemini থেকে বার্তা পাওয়া গেছে কিন্তু কোনো টেক্সট নেই।"
+
+        except Exception as e:
+            error_str = str(e)
+            print(f"API Key Index [{current_key_index}] Failed: {error_str}")
+            
+            # Switch to the next key seamlessly
+            current_key_index = (current_key_index + 1) % total_keys
+            attempts += 1
+
+            if "429" in error_str or "quota" in error_str.lower() or "limit" in error_str.lower():
+                print(f"Switching to API Key Index [{current_key_index}] due to Rate Limit.")
+                continue
+            else:
+                # Retrying with next key even for other API errors
+                continue
+
+    return "❌ দুঃখিত, আপনার ৮টি API Key-এর প্রতিটির মিনিট লিমিট শেষ হয়েছে। ১ মিনিট পর আবার চেষ্টা করুন।"
 
 # --- 7. Security Confirmation View ---
 class ConfirmationView(View):
@@ -217,15 +249,15 @@ class ConfirmationView(View):
         self.action_type = action_type
         self.action_data = action_data
 
-    @discord.ui.button(label="✅ Anumodan Din", style=discord.ButtonStyle.green)
+    @discord.ui.button(label="✅ অনুমোদন দিন", style=discord.ButtonStyle.green)
     async def confirm(self, interaction: discord.Interaction, button: Button):
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("❌ Keval Server Owner anumodan dite parben!", ephemeral=True)
+            await interaction.response.send_message("❌ কেবল সার্ভার অনার এই সংবেদনশীল কাজের অনুমোদন দিতে পারবেন!", ephemeral=True)
             return
 
         for item in self.children:
             item.disabled = True
-        await interaction.response.edit_message(content="⏳ **Anumodan somponno hoyeche. Kaj kora hochhe...**", view=self)
+        await interaction.response.edit_message(content="⏳ **অনুমোদন সম্পন্ন হয়েছে। কাজ কার্যকর করা হচ্ছে...**", view=self)
 
         if self.action_type == "power":
             res = execute_power_signal(self.action_data)
@@ -234,17 +266,17 @@ class ConfirmationView(View):
             res = execute_file_deletion(self.action_data)
             await send_split_message(interaction.channel, f"🗑 **File Delete Result:** {res}")
 
-    @discord.ui.button(label="❌ Batil Korun", style=discord.ButtonStyle.red)
+    @discord.ui.button(label="❌ বাতিল করুন", style=discord.ButtonStyle.red)
     async def cancel(self, interaction: discord.Interaction, button: Button):
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("❌ Keval Owner ei button bebohar korte parben!", ephemeral=True)
+            await interaction.response.send_message("❌ কেবল অনার এই বাটন ব্যবহার করতে পারবেন!", ephemeral=True)
             return
 
         for item in self.children:
             item.disabled = True
-        await interaction.response.edit_message(content="🛑 **Kajti batil kora hoyeche.**", view=self)
+        await interaction.response.edit_message(content="🛑 **কাজটি বাতিল করা হয়েছে।**", view=self)
 
-# --- 8. Discord Bot Events ---
+# --- 8. Discord Client Setup ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.messages = True
@@ -264,9 +296,8 @@ async def send_split_message(channel, text: str):
 
 @bot.event
 async def on_ready():
-    selected_model = get_active_gemini_model_name()
     print(f"Logged in as {bot.user.name}!")
-    print(f"Active Gemini Model: {selected_model}")
+    print(f"Loaded {len(GEMINI_API_KEYS)} Gemini API Key(s) for Rotation.")
 
 @bot.event
 async def on_message(message):
@@ -285,15 +316,15 @@ async def on_message(message):
         if "restart server" in msg_lower or "stop server" in msg_lower:
             sig = "restart" if "restart" in msg_lower else "stop"
             view = ConfirmationView(MY_DISCORD_ID, "power", sig)
-            await message.channel.send(f"⚠️ **Anumodaner Anurodh:** Server `{sig.upper()}` korte chachhen. Apni ki nishchit?", view=view)
+            await message.channel.send(f"⚠️ **অনুমোদনের অনুরোধ:** সার্ভার `{sig.upper()}` করতে চাচ্ছেন। আপনি কি নিশ্চিত?", view=view)
             return
 
         memory_data = get_saved_memory()
         sys_instruction = (
             "You are a friendly, highly intelligent Minecraft Paper 1.21.11 Server Administrator & Assistant.\n\n"
             "BEHAVIOR RULES:\n"
-            "1. Casual Chat: When user greets or talks normally, respond warmly and naturally in Bangla or English.\n"
-            "2. Server Management: When asked about server status, logs, console, or files, execute appropriate tools precisely.\n"
+            "1. Casual Chat: When user greets or talks normally, respond warmly, naturally, and helpfully in Bangla or English.\n"
+            "2. Server Management: When asked about server status, logs, console, or files, execute appropriate tools precisely without error.\n"
             "3. Internet Search & Troubleshooting: If facing unknown plugin issues or asked for internet info, use `search_internet` tool to find solutions online, summarize the fix, and save it to memory using `save_memory_fact`.\n\n"
             f"Long-Term Saved Memory & Learned Solutions:\n{memory_data}"
         )
@@ -304,29 +335,14 @@ async def on_message(message):
             save_memory_fact, get_saved_memory, search_internet
         ]
 
-        active_model_name = get_active_gemini_model_name()
+        # Execute response generation on background thread with Key Rotation
+        response_text = await asyncio.to_thread(
+            generate_response_with_key_rotation, msg, sys_instruction, tools_list
+        )
 
-        if not GEMINI_API_KEY:
-            await send_split_message(message.channel, "❌ GEMINI_API_KEY paowa jayni. Render-er Environment Variables check korun.")
-            return
-
-        try:
-            model = genai.GenerativeModel(
-                model_name=active_model_name,
-                tools=tools_list,
-                system_instruction=sys_instruction
-            )
-            chat = model.start_chat(enable_automatic_function_calling=True)
-            res = await asyncio.to_thread(chat.send_message, msg)
-            
-            if res.text:
-                await send_split_message(message.channel, res.text)
-            else:
-                await send_split_message(message.channel, "⚠️ Gemini theke kono text response paowa jayni.")
-        except Exception as e:
-            await send_split_message(message.channel, f"❌ **Gemini API Error:** `{str(e)}`")
+        await send_split_message(message.channel, response_text)
 
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
-        
+                      
