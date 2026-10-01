@@ -180,34 +180,42 @@ def execute_file_deletion(file_path: str) -> str:
     except Exception as e:
         return f"Error deleting file: {str(e)}"
 
-# --- 6. Automatic Active Model Finder ---
-def get_active_gemini_model():
-    """Dynamically fetches active and supported Gemini model for content generation."""
+# --- 6. Robust Active Model Finder with Fallback ---
+def generate_gemini_response(prompt: str, sys_instruction: str, tools_list: list) -> str:
+    """Tries active valid Gemini models and falls back if a model returns 404."""
+    candidate_models = [
+        'gemini-1.5-flash',
+        'gemini-1.5-pro',
+        'gemini-1.0-pro'
+    ]
+    
     try:
-        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        # Priority preferences
-        preferred = [
-            'models/gemini-1.5-flash',
-            'models/gemini-2.0-flash',
-            'models/gemini-1.5-flash-latest',
-            'models/gemini-1.5-pro'
-        ]
-        
-        for p in preferred:
-            if p in models:
-                return p
-                
-        for m in models:
-            if 'flash' in m or 'pro' in m:
-                return m
-                
-        if models:
-            return models[0]
+        available = [m.name.replace('models/', '') for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        candidate_models = [m for m in candidate_models if m in available] + candidate_models
     except Exception as e:
-        print(f"Model search error: {e}")
-        
-    return 'models/gemini-1.5-flash'
+        print(f"Could not list models: {e}")
+
+    seen = set()
+    candidate_models = [x for x in candidate_models if not (x in seen or seen.add(x))]
+
+    last_error = ""
+    for model_name in candidate_models:
+        try:
+            model = genai.GenerativeModel(
+                model_name=f"models/{model_name}",
+                tools=tools_list,
+                system_instruction=sys_instruction
+            )
+            chat = model.start_chat(enable_automatic_function_calling=True)
+            res = chat.send_message(prompt)
+            if res.text:
+                return res.text
+        except Exception as e:
+            last_error = str(e)
+            print(f"Model {model_name} failed: {e}")
+            continue
+
+    return f"❌ Gemini API Error: `{last_error}`"
 
 # --- 7. Security Confirmation View ---
 class ConfirmationView(View):
@@ -264,9 +272,7 @@ async def send_split_message(channel, text: str):
 
 @bot.event
 async def on_ready():
-    active_model = get_active_gemini_model()
     print(f"Logged in as {bot.user.name}!")
-    print(f"Automatically selected active model: {active_model}")
 
 @bot.event
 async def on_message(message):
@@ -308,24 +314,13 @@ async def on_message(message):
             await send_split_message(message.channel, "❌ GEMINI_API_KEY paowa jayni. Render-e API Key set korun.")
             return
 
-        try:
-            active_model = get_active_gemini_model()
-            model = genai.GenerativeModel(
-                model_name=active_model,
-                tools=tools_list,
-                system_instruction=sys_instruction
-            )
-            chat = model.start_chat(enable_automatic_function_calling=True)
-            res = await asyncio.to_thread(chat.send_message, msg)
+        response_text = await asyncio.to_thread(
+            generate_gemini_response, msg, sys_instruction, tools_list
+        )
 
-            if res.text:
-                await send_split_message(message.channel, res.text)
-            else:
-                await send_split_message(message.channel, "⚠️ Gemini theke barta paowa geche kintu kono text nei.")
-        except Exception as e:
-            await send_split_message(message.channel, f"❌ **Gemini API Error:** `{str(e)}`")
+        await send_split_message(message.channel, response_text)
 
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
-            
+        
