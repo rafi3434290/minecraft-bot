@@ -3,3 +3,4 @@ flask
 groq
 google-generativeai
 requests
+python-dotenv
