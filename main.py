@@ -180,29 +180,42 @@ def execute_file_deletion(file_path: str) -> str:
     except Exception as e:
         return f"Error deleting file: {str(e)}"
 
-# --- 6. Robust Active Model Finder with Fallback ---
+# --- 6. Robust Active Model Finder with Automatic Fallback ---
 def generate_gemini_response(prompt: str, sys_instruction: str, tools_list: list) -> str:
-    """Tries active valid Gemini models and falls back if a model returns 404."""
-    candidate_models = [
-        'gemini-1.5-flash',
-        'gemini-1.5-pro',
-        'gemini-1.0-pro'
-    ]
+    """Dynamically finds available active models and falls back cleanly."""
+    candidate_models = []
     
     try:
-        available = [m.name.replace('models/', '') for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        candidate_models = [m for m in candidate_models if m in available] + candidate_models
+        # Dynamically list models that support generateContent
+        all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # Priority order for active models
+        preferred_order = [
+            'models/gemini-1.5-flash',
+            'models/gemini-2.0-flash',
+            'models/gemini-1.5-pro',
+            'models/gemini-1.5-flash-latest'
+        ]
+        
+        for pref in preferred_order:
+            if pref in all_models:
+                candidate_models.append(pref)
+                
+        for m in all_models:
+            if m not in candidate_models and ('flash' in m or 'pro' in m):
+                candidate_models.append(m)
     except Exception as e:
-        print(f"Could not list models: {e}")
+        print(f"Failed to fetch dynamic models: {e}")
 
-    seen = set()
-    candidate_models = [x for x in candidate_models if not (x in seen or seen.add(x))]
+    # Default fallback list if API listing failed
+    if not candidate_models:
+        candidate_models = ['models/gemini-1.5-flash', 'models/gemini-1.5-pro']
 
     last_error = ""
     for model_name in candidate_models:
         try:
             model = genai.GenerativeModel(
-                model_name=f"models/{model_name}",
+                model_name=model_name,
                 tools=tools_list,
                 system_instruction=sys_instruction
             )
@@ -323,4 +336,3 @@ async def on_message(message):
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
-        
