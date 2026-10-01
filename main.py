@@ -9,14 +9,13 @@ import discord
 from discord.ui import Button, View
 from flask import Flask
 import google.generativeai as genai
-from groq import Groq
 
 # --- 1. Keep-Alive Web Server for Render Hosting ---
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Minecraft Smart Assistant Bot is Active & Running!"
+    return "Minecraft Gemini Assistant Bot is Active & Running!"
 
 def run():
     port = int(os.environ.get("PORT", 8080))
@@ -32,7 +31,6 @@ GODLIKE_PANEL_URL = "https://panel.godlike.host"
 GODLIKE_API_KEY = os.getenv("GODLIKE_API_KEY", "").strip()
 SERVER_ID = os.getenv("SERVER_ID", "").strip()
 MY_DISCORD_ID = int(os.getenv("MY_DISCORD_ID", "0"))
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 if GEMINI_API_KEY:
@@ -47,8 +45,8 @@ def load_memory() -> dict:
             with open(MEMORY_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
-            return {"rules": [], "solutions": []}
-    return {"rules": [], "solutions": []}
+            return {"rules": []}
+    return {"rules": []}
 
 def save_memory_fact(fact_or_rule: str) -> str:
     """Saves important server rules, plugin details, or solutions into long-term memory."""
@@ -182,60 +180,36 @@ def execute_file_deletion(file_path: str) -> str:
     except Exception as e:
         return f"Error deleting file: {str(e)}"
 
-# --- 6. Dynamic Gemini Model Selection (Prevents 404 Errors) ---
-def get_active_gemini_model():
+# --- 6. Active Gemini Model Detection ---
+def get_active_gemini_model_name():
     if not GEMINI_API_KEY:
         return None
     try:
-        available = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
-        # Priority Model Selection
-        preferred = [
+        # Priority order based on active Google AI Studio models
+        preferred_list = [
             'models/gemini-1.5-flash',
-            'models/gemini-1.5-flash-latest',
             'models/gemini-2.0-flash',
+            'models/gemini-1.5-flash-latest',
             'models/gemini-1.5-pro'
         ]
         
-        for p in preferred:
-            if p in available:
-                return p
+        for pref in preferred_list:
+            if pref in available_models:
+                return pref
         
-        for m_name in available:
+        for m_name in available_models:
             if 'flash' in m_name or 'pro' in m_name:
                 return m_name
                 
-        if available:
-            return available[0]
+        if available_models:
+            return available_models[0]
     except Exception as e:
-        print(f"Error fetching Gemini model list: {e}")
+        print(f"Model listing error: {e}")
     return 'models/gemini-1.5-flash'
 
-# Dynamic Groq Backup Fallback
-def call_groq_backup(sys_prompt: str, user_prompt: str) -> str:
-    if not GROQ_API_KEY:
-        return None
-    try:
-        client = Groq(api_key=GROQ_API_KEY)
-        groq_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"]
-        for m in groq_models:
-            try:
-                res = client.chat.completions.create(
-                    model=m,
-                    messages=[
-                        {"role": "system", "content": sys_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    max_tokens=600
-                )
-                return res.choices[0].message.content
-            except Exception:
-                continue
-    except Exception as e:
-        print(f"Groq backup execution error: {e}")
-    return None
-
-# --- 7. Discord Security Confirmation View ---
+# --- 7. Security Confirmation View ---
 class ConfirmationView(View):
     def __init__(self, owner_id: int, action_type: str, action_data: str):
         super().__init__(timeout=60)
@@ -270,7 +244,7 @@ class ConfirmationView(View):
             item.disabled = True
         await interaction.response.edit_message(content="🛑 **কাজটি বাতিল করা হয়েছে।**", view=self)
 
-# --- 8. Discord Client Setup ---
+# --- 8. Discord Bot Events ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.messages = True
@@ -290,8 +264,9 @@ async def send_split_message(channel, text: str):
 
 @bot.event
 async def on_ready():
-    print(f"Logged in successfully as {bot.user.name}!")
-    print("Bot is ready for both casual chat and Minecraft server management.")
+    selected_model = get_active_gemini_model_name()
+    print(f"Logged in as {bot.user.name}!")
+    print(f"Active Gemini Model: {selected_model}")
 
 @bot.event
 async def on_message(message):
@@ -306,7 +281,6 @@ async def on_message(message):
         return
 
     async with message.channel.typing():
-        # Security Confirmation Checks for Critical Actions
         msg_lower = msg.lower()
         if "restart server" in msg_lower or "stop server" in msg_lower:
             sig = "restart" if "restart" in msg_lower else "stop"
@@ -314,12 +288,11 @@ async def on_message(message):
             await message.channel.send(f"⚠️ **অনুমোদনের অনুরোধ:** সার্ভার `{sig.upper()}` করতে চাচ্ছেন। আপনি কি নিশ্চিত?", view=view)
             return
 
-        # Prepare System Context
         memory_data = get_saved_memory()
         sys_instruction = (
             "You are a friendly, highly intelligent Minecraft Paper 1.21.11 Server Administrator & Assistant.\n\n"
             "BEHAVIOR RULES:\n"
-            "1. Casual Chat: When user greets or talks normally, respond warmly and naturally like a helpful peer.\n"
+            "1. Casual Chat: When user greets or talks normally, respond warmly and naturally like a supportive peer in Bangla or English.\n"
             "2. Server Management: When asked about server status, logs, console, or files, execute appropriate tools precisely.\n"
             "3. Internet Search & Troubleshooting: If facing unknown plugin issues or asked for internet info, use `search_internet` tool to find solutions online, summarize the fix, and save it to memory using `save_memory_fact`.\n\n"
             f"Long-Term Saved Memory & Learned Solutions:\n{memory_data}"
@@ -331,35 +304,29 @@ async def on_message(message):
             save_memory_fact, get_saved_memory, search_internet
         ]
 
-        # Execute Gemini with Native Automatic Function Calling
-        gemini_success = False
-        active_model_name = get_active_gemini_model()
+        active_model_name = get_active_gemini_model_name()
 
-        if active_model_name:
-            try:
-                model = genai.GenerativeModel(
-                    model_name=active_model_name,
-                    tools=tools_list,
-                    system_instruction=sys_instruction
-                )
-                chat = model.start_chat(enable_automatic_function_calling=True)
-                res = await asyncio.to_thread(chat.send_message, msg)
-                
-                if res.text:
-                    await send_split_message(message.channel, res.text)
-                    gemini_success = True
-            except Exception as e:
-                print(f"Gemini execution error: {e}")
+        if not GEMINI_API_KEY:
+            await send_split_message(message.channel, "❌ GEMINI_API_KEY পাওয়া যায়নি। Render-এর Environment Variables চেক করুন।")
+            return
 
-        # Groq Fallback if Gemini is unavailable
-        if not gemini_success:
-            backup_res = call_groq_backup(sys_instruction, msg)
-            if backup_res:
-                await send_split_message(message.channel, f"*(Backup AI)*\n{backup_res}")
+        try:
+            model = genai.GenerativeModel(
+                model_name=active_model_name,
+                tools=tools_list,
+                system_instruction=sys_instruction
+            )
+            chat = model.start_chat(enable_automatic_function_calling=True)
+            res = await asyncio.to_thread(chat.send_message, msg)
+            
+            if res.text:
+                await send_split_message(message.channel, res.text)
             else:
-                await send_split_message(message.channel, "❌ AI পরিষেবা বর্তমানে সাড়া দিচ্ছে না। অনুগ্রহ করে আপনার API Key চেক করুন।")
+                await send_split_message(message.channel, "⚠️ Gemini থেকে কোনো টেক্সট রেসপন্স পাওয়া যায়নি।")
+        except Exception as e:
+            await send_split_message(message.channel, f"❌ **Gemini API Error:** `{str(e)}`")
 
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
-        
+            
