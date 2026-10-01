@@ -180,14 +180,14 @@ def execute_file_deletion(file_path: str) -> str:
     except Exception as e:
         return f"Error deleting file: {str(e)}"
 
-# --- 6. Active Gemini Model Detection ---
+# --- 6. Valid Active Gemini Model Selection ---
 def get_active_gemini_model_name():
     if not GEMINI_API_KEY:
         return None
     try:
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
-        # Priority order based on active Google AI Studio models
+        # Valid non-deprecated models
         preferred_list = [
             'models/gemini-1.5-flash',
             'models/gemini-2.0-flash',
@@ -200,7 +200,7 @@ def get_active_gemini_model_name():
                 return pref
         
         for m_name in available_models:
-            if 'flash' in m_name or 'pro' in m_name:
+            if ('flash' in m_name or 'pro' in m_name) and '2.5' not in m_name:
                 return m_name
                 
         if available_models:
@@ -217,15 +217,15 @@ class ConfirmationView(View):
         self.action_type = action_type
         self.action_data = action_data
 
-    @discord.ui.button(label="✅ অনুমোদন দিন", style=discord.ButtonStyle.green)
+    @discord.ui.button(label="✅ Anumodan Din", style=discord.ButtonStyle.green)
     async def confirm(self, interaction: discord.Interaction, button: Button):
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("❌ কেবল সার্ভার অনার এই সংবেদনশীল কাজের অনুমোদন দিতে পারবেন!", ephemeral=True)
+            await interaction.response.send_message("❌ Keval Server Owner anumodan dite parben!", ephemeral=True)
             return
 
         for item in self.children:
             item.disabled = True
-        await interaction.response.edit_message(content="⏳ **অনুমোদন সম্পন্ন হয়েছে। কাজ কার্যকর করা হচ্ছে...**", view=self)
+        await interaction.response.edit_message(content="⏳ **Anumodan somponno hoyeche. Kaj kora hochhe...**", view=self)
 
         if self.action_type == "power":
             res = execute_power_signal(self.action_data)
@@ -234,15 +234,15 @@ class ConfirmationView(View):
             res = execute_file_deletion(self.action_data)
             await send_split_message(interaction.channel, f"🗑 **File Delete Result:** {res}")
 
-    @discord.ui.button(label="❌ বাতিল করুন", style=discord.ButtonStyle.red)
+    @discord.ui.button(label="❌ Batil Korun", style=discord.ButtonStyle.red)
     async def cancel(self, interaction: discord.Interaction, button: Button):
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("❌ কেবল অনার এই বাটন ব্যবহার করতে পারবেন!", ephemeral=True)
+            await interaction.response.send_message("❌ Keval Owner ei button bebohar korte parben!", ephemeral=True)
             return
 
         for item in self.children:
             item.disabled = True
-        await interaction.response.edit_message(content="🛑 **কাজটি বাতিল করা হয়েছে।**", view=self)
+        await interaction.response.edit_message(content="🛑 **Kajti batil kora hoyeche.**", view=self)
 
 # --- 8. Discord Bot Events ---
 intents = discord.Intents.default()
@@ -285,14 +285,14 @@ async def on_message(message):
         if "restart server" in msg_lower or "stop server" in msg_lower:
             sig = "restart" if "restart" in msg_lower else "stop"
             view = ConfirmationView(MY_DISCORD_ID, "power", sig)
-            await message.channel.send(f"⚠️ **অনুমোদনের অনুরোধ:** সার্ভার `{sig.upper()}` করতে চাচ্ছেন। আপনি কি নিশ্চিত?", view=view)
+            await message.channel.send(f"⚠️ **Anumodaner Anurodh:** Server `{sig.upper()}` korte chachhen. Apni ki nishchit?", view=view)
             return
 
         memory_data = get_saved_memory()
         sys_instruction = (
             "You are a friendly, highly intelligent Minecraft Paper 1.21.11 Server Administrator & Assistant.\n\n"
             "BEHAVIOR RULES:\n"
-            "1. Casual Chat: When user greets or talks normally, respond warmly and naturally like a supportive peer in Bangla or English.\n"
+            "1. Casual Chat: When user greets or talks normally, respond warmly and naturally in Bangla or English.\n"
             "2. Server Management: When asked about server status, logs, console, or files, execute appropriate tools precisely.\n"
             "3. Internet Search & Troubleshooting: If facing unknown plugin issues or asked for internet info, use `search_internet` tool to find solutions online, summarize the fix, and save it to memory using `save_memory_fact`.\n\n"
             f"Long-Term Saved Memory & Learned Solutions:\n{memory_data}"
@@ -307,7 +307,7 @@ async def on_message(message):
         active_model_name = get_active_gemini_model_name()
 
         if not GEMINI_API_KEY:
-            await send_split_message(message.channel, "❌ GEMINI_API_KEY পাওয়া যায়নি। Render-এর Environment Variables চেক করুন।")
+            await send_split_message(message.channel, "❌ GEMINI_API_KEY paowa jayni. Render-er Environment Variables check korun.")
             return
 
         try:
@@ -322,11 +322,11 @@ async def on_message(message):
             if res.text:
                 await send_split_message(message.channel, res.text)
             else:
-                await send_split_message(message.channel, "⚠️ Gemini থেকে কোনো টেক্সট রেসপন্স পাওয়া যায়নি।")
+                await send_split_message(message.channel, "⚠️ Gemini theke kono text response paowa jayni.")
         except Exception as e:
             await send_split_message(message.channel, f"❌ **Gemini API Error:** `{str(e)}`")
 
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_BOT_TOKEN)
-            
+        
